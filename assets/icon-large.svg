@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Codex Goal Ledger</title>
+  <desc id="desc">A ruled ledger page with an orbiting verified-state signal.</desc>
+  <rect width="512" height="512" rx="108" fill="#F4EFE4"/>
+  <path d="M132 86h194l56 56v284H132z" fill="#EEE5D6" stroke="#243840" stroke-width="28" stroke-linejoin="round"/>
+  <path d="M326 86v72h56" fill="none" stroke="#243840" stroke-width="28" stroke-linejoin="round"/>
+  <path d="M194 226h128M194 286h100M194 346h64" fill="none" stroke="#315E71" stroke-width="24" stroke-linecap="round"/>
+  <path d="M99 322c-22-100 36-200 136-228" fill="none" stroke="#71888A" stroke-width="10" stroke-linecap="round" stroke-dasharray="2 28"/>
+  <circle cx="367" cy="363" r="51" fill="#C45136" stroke="#F4EFE4" stroke-width="24"/>
+</svg>

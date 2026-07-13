@@ -1,0 +1,10 @@
+interface:
+  display_name: "Codex Goal Ledger"
+  short_description: "Durable state for long-running Codex work"
+  icon_small: "./assets/icon-small.svg"
+  icon_large: "./assets/icon-large.svg"
+  brand_color: "#315E71"
+  default_prompt: "Use $codex-goal-ledger to turn this long-running task into a durable goal, progress ledger, and verified interactive HTML dashboard. During planning, ask one bundled yes/no choice for an external-LLM review prompt, an additional $codex-review, and a clean-session GPT handoff. After material renders, open or refresh the dashboard in Codex preview."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Codex Goal Ledger</title>
+  <rect width="64" height="64" rx="14" fill="#F4EFE4"/>
+  <path d="M17 13h24l7 7v31H17z" fill="none" stroke="#243840" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M41 13v9h7M24 30h17M24 38h13" fill="none" stroke="#315E71" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="46" cy="45" r="6" fill="#C45136" stroke="#F4EFE4" stroke-width="3"/>
+</svg>

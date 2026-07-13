@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="ledger-digest" content="{{DIGEST}}">
+  <meta name="description" content="Durable goal ledger for {{TITLE_ATTR}}">
+  <title>{{TITLE}} · Goal Ledger</title>
+  <link rel="stylesheet" href="../../assets/goal-ledger.css">
+  <script src="../../assets/goal-ledger.js" defer></script>
+</head>
+<body data-goal-status="{{STATUS_ATTR}}" data-execution-health="{{HEALTH_ATTR}}">
+  <a class="skip-link" href="#main-content">Skip to ledger</a>
+
+  <header class="masthead">
+    <a class="identity" href="#top" aria-label="Goal ledger home">
+      <span class="identity-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span>
+        <strong>Codex Goal Ledger</strong>
+        <small>Durable run record</small>
+      </span>
+    </a>
+
+    <div class="masthead-meta" aria-label="Artifact metadata">
+      <span>{{SLUG}}</span>
+      <span>Updated {{UPDATED}}</span>
+    </div>
+
+    <div class="masthead-actions">
+      <button class="quiet-button js-only" type="button" data-theme-toggle aria-label="Change color theme">
+        <span aria-hidden="true">◐</span><span data-theme-label>System</span>
+      </button>
+    </div>
+  </header>
+
+  <main id="main-content">
+    <section class="opening" id="top" aria-labelledby="goal-title">
+      <div class="opening-index" aria-hidden="true">
+        <span>GL</span>
+        <b>{{LEDGER_VERSION}}</b>
+      </div>
+      <div class="opening-copy">
+        <p class="eyebrow"><span class="signal-dot"></span>{{STATUS_LABEL}} objective</p>
+        <h1 id="goal-title">{{TITLE}}</h1>
+        <div class="outcome">{{OUTCOME_HTML}}</div>
+      </div>
+      <aside class="dawn-note" aria-label="Latest verified state">
+        <span class="annotation">Dawn brief / latest truth</span>
+        {{AT_GLANCE_HTML}}
+        <a href="#recovery">Jump to recovery capsule <span aria-hidden="true">↓</span></a>
+      </aside>
+    </section>
+
+    <section class="instrument-strip" aria-label="Goal instruments">
+      <div>
+        <span>Goal state</span>
+        <strong class="state-value" data-state="{{STATUS_ATTR}}">{{STATUS_LABEL}}</strong>
+      </div>
+      <div>
+        <span>Execution</span>
+        <strong class="state-value" data-state="{{HEALTH_ATTR}}">{{HEALTH_LABEL}}</strong>
+      </div>
+      <div>
+        <span>Mode</span>
+        <strong>{{MODE}}</strong>
+      </div>
+      <div>
+        <span>Ledger sync</span>
+        <strong>{{SYNC_LABEL}}</strong>
+      </div>
+      <div class="instrument-coordinate" aria-label="Artifact coordinate">
+        <span>{{GENERATED_DATE}}</span>
+        <strong>{{DIGEST_SHORT}}</strong>
+      </div>
+    </section>
+
+    <div class="ledger-layout">
+      <nav class="phase-rail" aria-label="Goal phases">
+        <p class="rail-title">Run sequence</p>
+        <ol>
+          {{PHASE_RAIL_HTML}}
+        </ol>
+        <div class="completion-mark">
+          <span class="completion-track" aria-hidden="true"><i style="width: {{COMPLETION_PERCENT}}%"></i></span>
+          <span>{{COMPLETION_PERCENT}}%</span>
+          <small>phases resolved</small>
+        </div>
+      </nav>
+
+      <div class="ledger-content">
+        <section class="briefing" id="briefing" aria-labelledby="briefing-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Current bearing</p>
+              <h2 id="briefing-title">What matters now</h2>
+            </div>
+            <span class="section-number">01</span>
+          </div>
+          <div class="briefing-grid">
+            <div>
+              <h3>Current focus</h3>
+              {{CURRENT_FOCUS_HTML}}
+            </div>
+            <div>
+              <h3>Next action</h3>
+              {{NEXT_ACTION_HTML}}
+            </div>
+          </div>
+        </section>
+
+        <section class="gates" id="gates" aria-labelledby="gates-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Decision boundary</p>
+              <h2 id="gates-title">Open gates</h2>
+            </div>
+            <span class="gate-count">{{GATE_COUNT}} open</span>
+          </div>
+          <div class="gate-list">{{OPEN_GATES_HTML}}</div>
+        </section>
+
+        <section class="recovery" id="recovery" aria-labelledby="recovery-title">
+          <div class="recovery-tab">Recovery capsule</div>
+          <div class="recovery-head">
+            <div>
+              <p class="eyebrow">Resume without chat history</p>
+              <h2 id="recovery-title">Return to verified ground</h2>
+            </div>
+            <button class="quiet-button inverse js-only" type="button" data-copy-recovery aria-label="Copy recovery capsule">
+              <span aria-hidden="true">⧉</span><span data-copy-label aria-live="polite">Copy capsule</span>
+            </button>
+          </div>
+          <div class="recovery-body" data-recovery-content>{{RECOVERY_HTML}}</div>
+        </section>
+
+        <section class="activity" id="activity" aria-labelledby="activity-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Evidence-bearing record</p>
+              <h2 id="activity-title">Operational ledger</h2>
+            </div>
+            <span class="section-number">02</span>
+          </div>
+
+          <div class="ledger-tools js-only" role="search">
+            <label>
+              <span>Filter record</span>
+              <input type="search" data-ledger-search placeholder="Search evidence, owner, state…" autocomplete="off">
+            </label>
+            <label>
+              <span>State</span>
+              <select data-ledger-state>
+                <option value="all">All states</option>
+                {{STATE_OPTIONS_HTML}}
+              </select>
+            </label>
+            <output data-result-count aria-live="polite">{{LEDGER_ROW_COUNT}} entries</output>
+          </div>
+
+          <div class="activity-table" role="table" aria-label="Operational record">
+            <div class="activity-header" role="row">
+              <span role="columnheader">Type</span>
+              <span role="columnheader">Item</span>
+              <span role="columnheader">State</span>
+              <span role="columnheader">Evidence / recovery</span>
+            </div>
+            <div data-ledger-rows>
+              {{LEDGER_ROWS_HTML}}
+            </div>
+          </div>
+          <p class="empty-filter" data-empty-filter hidden>No ledger entries match this filter.</p>
+        </section>
+
+        <section class="session-kit" id="session-kit" aria-labelledby="session-kit-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Clean-context continuation</p>
+              <h2 id="session-kit-title">Session kit</h2>
+            </div>
+            <span class="section-number">03</span>
+          </div>
+          <p class="session-kit-intro">Ready-to-copy prompts for an independent review or a clean-session handoff. Their content is generated from the same canonical ledger as this view.</p>
+          <div class="session-kit-list">
+            {{CLOSEOUT_KIT_HTML}}
+          </div>
+        </section>
+
+        <section class="source-record" id="source" aria-labelledby="source-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Canonical Markdown</p>
+              <h2 id="source-title">Contract and operating record</h2>
+            </div>
+            <span class="section-number">04</span>
+          </div>
+          <details open>
+            <summary>Goal contract <span>goal.md</span></summary>
+            <div class="markdown-body">{{GOAL_SECTIONS_HTML}}</div>
+          </details>
+          <details>
+            <summary>Progress record <span>progress.md</span></summary>
+            <div class="markdown-body">{{PROGRESS_SECTIONS_HTML}}</div>
+          </details>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <div>
+      <span class="identity-mark small" aria-hidden="true"><i></i><i></i><i></i></span>
+      <p>Generated from repository truth. Edit Markdown, then render.</p>
+    </div>
+    <p>Generated {{GENERATED_AT}} · digest {{DIGEST_SHORT}}</p>
+  </footer>
+</body>
+</html>
