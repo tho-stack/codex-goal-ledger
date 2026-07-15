@@ -161,23 +161,6 @@ def _sequence_edges(nodes: list[ReviewNode]) -> tuple[ReviewEdge, ...]:
     return tuple(_edge_for_state(node.state) for node in nodes[:-1])
 
 
-def _with_revision_nodes(nodes: list[ReviewNode], lane: str) -> list[ReviewNode]:
-    expanded: list[ReviewNode] = []
-    for index, node in enumerate(nodes):
-        expanded.append(node)
-        if node.state in {"blocked", "revise"} and index < len(nodes) - 1:
-            expanded.append(
-                ReviewNode(
-                    f"revision-{lane}-{index + 1}",
-                    "Revise",
-                    "Verified fixes before re-review",
-                    "complete",
-                    "#activity",
-                )
-            )
-    return expanded
-
-
 def build_review_lanes(
     goal_dir: Path,
     goal: Document,
@@ -190,12 +173,8 @@ def build_review_lanes(
     verification = _verification_map(verification_rows)
 
     planning = [ReviewNode("plan", "Plan", "Canonical contract", "complete", "#source")]
-    planning.extend(
-        _with_revision_nodes(_fable_nodes(goal_dir, goal, fable_selected), "fable")
-    )
-    planning.extend(
-        _with_revision_nodes(_pro_nodes(goal_dir, goal, pro_selected, "plan"), "pro-plan")
-    )
+    planning.extend(_fable_nodes(goal_dir, goal, fable_selected))
+    planning.extend(_pro_nodes(goal_dir, goal, pro_selected, "plan"))
     planning.append(ReviewNode("build", "Build", "Implementation gate", "pending", "#activity"))
 
     rescue = [ReviewNode("build-rescue", "Build", "Scientific work", "active", "#activity")]
@@ -204,11 +183,7 @@ def build_review_lanes(
     rescue.append(ReviewNode("return-build", "Return to build", "Apply verified learning", "pending", "#activity"))
 
     closeout = [ReviewNode("verify", "Verify", "Evidence gate", "pending", "#activity")]
-    closeout.extend(
-        _with_revision_nodes(
-            _pro_nodes(goal_dir, goal, pro_selected, "implementation"), "pro-implementation"
-        )
-    )
+    closeout.extend(_pro_nodes(goal_dir, goal, pro_selected, "implementation"))
     if codex_selected:
         codex_state = verification.get("Additional Codex review", "pending")
         closeout.append(

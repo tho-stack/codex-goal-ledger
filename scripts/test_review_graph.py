@@ -169,15 +169,20 @@ class ReviewGraphTests(unittest.TestCase):
         html = first.decode("utf-8")
         self.assertIn("GPT Pro R1", html)
         self.assertIn("GPT Pro R2", html)
-        self.assertIn("Verified fixes before re-review", html)
+        self.assertNotIn("Verified fixes before re-review", html)
+        self.assertIn("return for revision", html)
         self.assertIn('data-direction="return"', html)
+        self.assertIn('data-layout="inline"', html)
         self.assertIn("1 / 1 selected lanes reconciled", html)
         self.assertNotIn("COMPLETION_PERCENT", html)
 
-    def test_dashboard_css_keeps_mobile_graph_scroll_and_reduced_motion(self) -> None:
+    def test_dashboard_css_keeps_review_graph_responsive_and_reduced_motion(self) -> None:
         css = (SCRIPT_DIR.parent / "assets" / "goal-ledger.css").read_text()
         self.assertIn(".review-circuit-scroll", css)
-        self.assertIn("overflow-x: auto", css)
+        self.assertIn("overflow-x: visible", css)
+        self.assertIn('.review-lane[data-layout="stacked"]', css)
+        self.assertIn("grid-template-columns: clamp(6rem, 9vw, 8rem) minmax(0, 1fr)", css)
+        self.assertNotIn("min-width: max-content", css)
         self.assertIn("@media (prefers-reduced-motion: reduce)", css)
 
 

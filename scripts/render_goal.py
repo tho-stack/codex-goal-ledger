@@ -172,6 +172,7 @@ def _phase_rail(rows: list[list[str]]) -> str:
 def _review_graph_html(lanes: tuple[object, ...]) -> str:
     rendered: list[str] = []
     for lane in lanes:
+        layout = "stacked" if len(lane.nodes) > 6 else "inline"
         sequence: list[str] = []
         for index, node in enumerate(lane.nodes):
             content = (
@@ -200,7 +201,8 @@ def _review_graph_html(lanes: tuple[object, ...]) -> str:
                     f'<span aria-hidden="true">{arrow}</span><small>{escape(edge.label)}</small></li>'
                 )
         rendered.append(
-            f'<section class="review-lane" aria-labelledby="review-lane-{escape(lane.key, quote=True)}">'
+            f'<section class="review-lane" data-layout="{layout}" '
+            f'aria-labelledby="review-lane-{escape(lane.key, quote=True)}">'
             f'<h3 id="review-lane-{escape(lane.key, quote=True)}">{escape(lane.label)}</h3>'
             f'<ol>{"".join(sequence)}</ol></section>'
         )
