@@ -39,7 +39,7 @@ The dashboard derives this circuit from preserved evidence. A blocked or revise 
 
 The three review roles are intentionally different:
 
-- **Fable planning peer** challenges the plan before Build. It may propose missing information, features, and scientific hypotheses. Each round is read-only, manifest-bound, preserved, and reconciled before the next round.
+- **Fable planning peer** challenges the plan before Build. It may propose missing information, features, and scientific hypotheses. Selecting it authorizes preparing the Anthropic review lane; each exact read-only manifest still receives an owner-facing native approval checkbox, then is preserved and reconciled before the next round.
 - **GPT Pro** is an independent high-context gate for the plan, the implementation, or both. A `BLOCKED` result returns to revision; `SIGNED OFF` advances only after Codex records a typed, locally verified reconciliation.
 - **Codex closeout reviewer** runs after Verify. Accepted findings return to Build or Verify, then the closeout evidence is refreshed before Close.
 
@@ -76,7 +76,9 @@ From this repository:
 
 ```bash
 python3 scripts/install_skill.py --with-agents
+python3 scripts/install_skill.py --replace --configure-review-approvals
 python3 scripts/install_skill.py --check --with-agents
+python3 scripts/install_skill.py --check --configure-review-approvals
 ```
 
 The installer copies the skill and its owned agents into the Codex skill directory. It also checks the multi-agent settings the workflow depends on:
@@ -89,6 +91,15 @@ tool_namespace = "agents"
 ```
 
 If configuration is missing or incompatible, the skill reports the exact fix rather than silently claiming that an agent profile was used.
+
+Fable also needs an owner-facing native approval route for each exact manifest. The explicit `--configure-review-approvals` option preserves a backup of `config.toml` and sets only:
+
+```toml
+approvals_reviewer = "user"
+approval_policy = "on-request"
+```
+
+Open a new Codex task after changing these values. A Fable `yes` is lane authorization to prepare review packets; the later native checkbox is the separate approval to transmit one disclosed digest. The skill never manufactures exact approval from an agent-authored allow-list or asks for a typed consent sentence.
 
 ## Use
 

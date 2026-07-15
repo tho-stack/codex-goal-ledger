@@ -62,8 +62,8 @@ allowed_skipped_verifications: none
 
 | Option | Choice | Artifact or action |
 | --- | --- | --- |
-| Claude Fable peer feedback | {{FABLE_FEEDBACK}} | `yes` selects {{FABLE_AUTHORIZATION}} for critique plus feature and science proposals; prepare one exact hashed file manifest, request native Codex transmission approval, and save one evidence artifact per round. |
-| Claude Fable scientific rescue | {{FABLE_RESCUE}} | `yes` authorizes bounded, automatic scientific rescue within the approved allow-list after a structured trigger qualifies; rescue remains advisory and cannot be completion evidence. |
+| Claude Fable peer feedback | {{FABLE_FEEDBACK}} | `yes` authorizes preparing {{FABLE_AUTHORIZATION}} through Anthropic Claude for critique plus feature and science proposals; every exact hashed manifest still requires native owner approval before transmission. |
+| Claude Fable scientific rescue | {{FABLE_RESCUE}} | `yes` authorizes preparing bounded scientific rescue through Anthropic Claude within the approved allow-list after a structured trigger qualifies; every exact manifest still requires native owner approval, and rescue cannot be completion evidence. |
 | GPT Pro review | {{PRO_REVIEW}} | `yes` selects {{PRO_REVIEW_AUTHORIZATION}} with a deterministic prompt plus scoped ZIP, platform-aware Safari/Chrome/ChatGPT routing or owner handoff, full raw-response custody, and typed reconciliation. |
 | External LLM review prompt | {{EXTERNAL_REVIEW_PROMPT}} | Generate `review-prompt.md` for Claude or another independent LLM. |
 | Additional Codex review | {{CODEX_REVIEW}} | Run the optional `$codex-review` closeout contract and record its evidence. |
@@ -71,7 +71,7 @@ allowed_skipped_verifications: none
 
 ## Authorization
 
-In-scope local reads, edits, and non-destructive validation may proceed without another prompt. A recorded Claude Fable choice of `yes` selects the configured read-only planning-review rounds without another conversational consent sentence. A recorded scientific-rescue choice of `yes` authorizes automatic rescue submissions only within the goal's approved repository scope and exact manifest; ask again only when the transmission or goal scope expands. A recorded GPT Pro choice of `yes` authorizes uploading only the exact generated `request.md` and hashed `context-packet.zip` to ChatGPT GPT Pro through the selected delivery lane; changed or additional files require a fresh packet and expanded scope requires confirmation. Before each external call, automatically submit its exact manifest-bound invocation to the applicable native approval layer. Ask before other external transmissions or writes, destructive actions, purchases, global installation, or material scope expansion.
+In-scope local reads, edits, and non-destructive validation may proceed without another prompt. A recorded Claude Fable `yes` is lane authorization to prepare the configured reviews for Anthropic Claude through the owner's account; it is not a claim that any exact packet has been transmitted or approved. After the manifest discloses paths, hashes, bytes, destination, and risk, obtain exact transmission approval through Codex's native action-time checkbox—never through an agent-authored allow-list or a required typed sentence. Scientific rescue uses the same two-layer rule within its approved repository scope. A recorded GPT Pro choice of `yes` authorizes uploading only the exact generated `request.md` and hashed `context-packet.zip` to ChatGPT GPT Pro through the selected delivery lane; changed or additional files require a fresh packet and expanded scope requires confirmation. Ask before other external transmissions or writes, destructive actions, purchases, global installation, or material scope expansion.
 
 ## Completion contract
 

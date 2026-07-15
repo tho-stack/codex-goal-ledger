@@ -30,6 +30,10 @@ MULTI_AGENT_SETTINGS = {
     "max_concurrent_threads_per_session": 8,
     "tool_namespace": "agents",
 }
+REVIEW_APPROVAL_SETTINGS = {
+    "approvals_reviewer": "user",
+    "approval_policy": "on-request",
+}
 
 
 def default_codex_home() -> Path:
@@ -148,6 +152,66 @@ def multi_agent_config_problems(config_path: Path) -> list[str]:
                 f"found {_toml_scalar(actual) if isinstance(actual, (bool, int, str)) else actual!r}"
             )
     return problems
+
+
+def review_approval_config_problems(config_path: Path) -> list[str]:
+    """Return configuration drift that prevents native owner approval UI."""
+    if not config_path.is_file():
+        return [f"missing external-review approval configuration: {config_path}"]
+    try:
+        parsed = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return [f"cannot validate external-review approval configuration {config_path}: {exc}"]
+    problems = []
+    for key, expected in REVIEW_APPROVAL_SETTINGS.items():
+        actual = parsed.get(key)
+        if actual != expected:
+            problems.append(
+                f"root {key} must be {_toml_scalar(expected)} for native owner approval; "
+                f"found {_toml_scalar(actual) if isinstance(actual, (bool, int, str)) else actual!r}"
+            )
+    return problems
+
+
+def _config_with_review_approvals(config_text: str, config_path: Path) -> str:
+    """Set only the two root approval keys, preserving every table and other key."""
+    _validate_toml(config_text, config_path)
+    first_table = re.search(r"(?m)^\s*\[", config_text)
+    managed_marker = re.search(rf"(?m)^{re.escape(MANAGED_BEGIN)}$", config_text)
+    boundaries = [
+        match.start() for match in (first_table, managed_marker) if match is not None
+    ]
+    end = min(boundaries) if boundaries else len(config_text)
+    root = config_text[:end]
+    rest = config_text[end:]
+    for key, value in REVIEW_APPROVAL_SETTINGS.items():
+        pattern = re.compile(rf"(?m)^[ \t]*{re.escape(key)}[ \t]*=.*$")
+        replacement = f"{key} = {_toml_scalar(value)}"
+        if pattern.search(root):
+            root = pattern.sub(replacement, root, count=1)
+        else:
+            root = root.rstrip() + ("\n" if root.strip() else "") + replacement + "\n"
+    candidate = root.rstrip() + ("\n\n" if rest else "\n") + rest.lstrip("\n")
+    _validate_toml(candidate, config_path)
+    return candidate
+
+
+def configure_review_approvals(codex_home: Path) -> list[Path]:
+    """Configure native user approval for external review, preserving a backup."""
+    codex_home = codex_home.expanduser().resolve()
+    config_path = codex_home / "config.toml"
+    config_text = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    candidate = _config_with_review_approvals(config_text, config_path)
+    if candidate == config_text:
+        return []
+    changed: list[Path] = []
+    if config_path.exists():
+        backup = backup_path(config_path)
+        shutil.copy2(config_path, backup)
+        changed.append(backup)
+    _atomic_write(config_path, candidate.encode("utf-8"))
+    changed.append(config_path)
+    return changed
 
 
 def _config_with_multi_agent(config_text: str, config_path: Path, *, replace: bool) -> str:
@@ -473,6 +537,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Also install or check Goal Ledger-owned Codex agent profiles and registrations.",
     )
     parser.add_argument(
+        "--configure-review-approvals",
+        action="store_true",
+        help=(
+            "Set root approvals_reviewer=\"user\" and approval_policy=\"on-request\" "
+            "so exact Fable manifests can reach the native owner approval UI."
+        ),
+    )
+    parser.add_argument(
         "--uninstall-agents",
         action="store_true",
         help="Remove only Goal Ledger-owned agent profiles and their managed config block.",
@@ -490,9 +562,10 @@ def main(argv: list[str] | None = None) -> int:
     destination = args.destination or default_destination()
     try:
         if args.uninstall_agents:
-            if args.check or args.with_agents:
+            if args.check or args.with_agents or args.configure_review_approvals:
                 raise ValueError(
-                    "--uninstall-agents cannot be combined with --check or --with-agents"
+                    "--uninstall-agents cannot be combined with --check, --with-agents, "
+                    "or --configure-review-approvals"
                 )
             removed = uninstall_agent_profiles(
                 default_codex_home(), force=args.force_agent_uninstall
@@ -508,6 +581,10 @@ def main(argv: list[str] | None = None) -> int:
             problems = installation_problems(PACKAGE_ROOT, destination.expanduser().resolve())
             if args.with_agents:
                 problems.extend(agent_installation_problems(default_codex_home()))
+            if args.configure_review_approvals:
+                problems.extend(
+                    review_approval_config_problems(default_codex_home() / "config.toml")
+                )
             if problems:
                 for problem in problems:
                     print(f"error: {problem}", file=sys.stderr)
@@ -515,6 +592,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Installation is current: {destination.expanduser().resolve()}")
             if args.with_agents:
                 print("Goal Ledger agent profiles and registrations are current.")
+            if args.configure_review_approvals:
+                print("External-review owner approval configuration is current.")
             return 0
 
         if args.with_agents:
@@ -524,6 +603,11 @@ def main(argv: list[str] | None = None) -> int:
         agent_changes = (
             install_agent_profiles(default_codex_home(), replace=args.replace)
             if args.with_agents
+            else []
+        )
+        review_approval_changes = (
+            configure_review_approvals(default_codex_home())
+            if args.configure_review_approvals
             else []
         )
     except (FileExistsError, FileNotFoundError, OSError, ValueError) as exc:
@@ -537,8 +621,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Preserved previous installation: {backup}")
     for path in agent_changes:
         print(f"Agent install change: {path}")
-    if args.with_agents:
-        print("Restart Codex or open a new task before checking session-visible agent roles.")
+    for path in review_approval_changes:
+        print(f"Review approval config change: {path}")
+    if args.with_agents or review_approval_changes:
+        print(
+            "Restart Codex or open a new task before checking session-visible agent roles "
+            "or native owner approval routing."
+        )
     return 0
 
 

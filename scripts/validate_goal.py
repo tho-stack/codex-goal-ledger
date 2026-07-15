@@ -577,7 +577,8 @@ def _validate_markdown(goal_dir: Path, problems: Problems) -> tuple[Document, Do
         if duplicate_approval:
             problems.add(
                 f"{progress.path}: remove the conversational Claude Fable approval gate; "
-                "prepare the exact manifest and submit native Codex approval automatically"
+                "lane authorization permits manifest preparation, while exact transmission "
+                "approval must use the owner-facing native Codex checkbox"
             )
 
     if closeout_choices.get(PRO_REVIEW_OPTION) == "yes":

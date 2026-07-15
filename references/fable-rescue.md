@@ -18,7 +18,7 @@ Never qualify authentication, permissions, authorization, dependency, network, o
 
 ## Invocation and durable custody
 
-Preparation prints an exact manifest without contacting Claude. Submit the matching runner command with `--approve-transmission <digest>` through the native external-transmission layer. The planning choice already authorizes automatic use inside the recorded repository scope; do not create another conversational approval gate. Ask only when scope expands.
+Preparation prints an exact manifest without contacting Claude. The planning choice authorizes preparing rescue inside the recorded repository scope, not transmitting an exact packet. Submit the matching runner command with `--approve-transmission <digest>` through the native owner-facing external-transmission checkbox after its manifest is disclosed. Do not create a typed conversational approval gate or infer exact approval from an agent-authored allow-list. Ask separately only when scope expands.
 
 The runner writes `candidate.json`, `request.json`, and `transmission-manifest.json` before the external call. The shared transport then records each attempt under `transport/attempt-N/` with `transport.json`, `raw-response.json`, and `stderr.txt`. Output is fsynced and atomically renamed before response parsing. A repeated identical invocation reuses completed output, refuses while a matching PID is live, and cannot mint a second incident from an unfinished matching candidate. Never replace this path with a raw Claude command.
 

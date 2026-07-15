@@ -123,6 +123,53 @@ class ExecutionProfileTests(unittest.TestCase):
             ],
             [profile["name"] for profile in payload["selected_implementers"]],
         )
+        self.assertFalse(payload["external_review_approval"]["configured"])
+
+    def test_external_review_preflight_fails_fast_until_owner_routing_is_configured(self) -> None:
+        codex_home = self.root / "codex-home-external-review"
+        environment = os.environ.copy()
+        environment["CODEX_HOME"] = str(codex_home)
+        self.run_script("install_skill.py", "--with-agents", env=environment)
+        config = codex_home / "config.toml"
+        text = config.read_text(encoding="utf-8")
+        config.write_text(
+            'approvals_reviewer = "auto_review"\n'
+            'approval_policy = "never"\n\n'
+            + text,
+            encoding="utf-8",
+        )
+        blocked = self.run_script(
+            "execution_profile.py",
+            "preflight",
+            "--codex-home",
+            codex_home,
+            "--require-external-review-approval",
+            "--json",
+            expected=1,
+        )
+        payload = json.loads(blocked.stdout)
+        self.assertFalse(payload["external_review_approval"]["configured"])
+        self.assertIn(
+            'root approvals_reviewer must be "user"',
+            "\n".join(payload["external_review_approval"]["problems"]),
+        )
+
+        self.run_script(
+            "install_skill.py",
+            "--configure-review-approvals",
+            env=environment,
+        )
+        ready = self.run_script(
+            "execution_profile.py",
+            "preflight",
+            "--codex-home",
+            codex_home,
+            "--require-external-review-approval",
+            "--json",
+        )
+        payload = json.loads(ready.stdout)
+        self.assertTrue(payload["external_review_approval"]["configured"])
+        self.assertEqual("unconfirmed", payload["external_review_approval"]["session_effective"])
 
     def test_initializer_derives_requested_profile_from_selected_implementer(self) -> None:
         selected_project = self.root / "selected-project"

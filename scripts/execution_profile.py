@@ -14,7 +14,12 @@ import tempfile
 import tomllib
 
 from agent_profiles import DEFAULT_IMPLEMENTER, IMPLEMENTER_NAMES
-from install_skill import AGENT_NAMES, agent_installation_problems, default_codex_home
+from install_skill import (
+    AGENT_NAMES,
+    agent_installation_problems,
+    default_codex_home,
+    review_approval_config_problems,
+)
 from ledger_common import LedgerError, load_document, parse_table, project_root_for, split_table_row
 
 
@@ -129,6 +134,7 @@ def preflight(
             "effort": str(data.get("model_reasoning_effort", "unconfirmed")),
         }
     configured = not problems
+    review_problems = review_approval_config_problems(codex_home / "config.toml")
     selected_names = tuple(
         dict.fromkeys((selected_implementer, *swarm_implementers))
     )
@@ -152,6 +158,15 @@ def preflight(
         "selected_implementer": selected_profiles[0],
         "selected_implementers": selected_profiles,
         "problems": problems,
+        "external_review_approval": {
+            "configured": not review_problems,
+            "problems": review_problems,
+            "session_effective": "unconfirmed",
+            "note": (
+                "Open a new Codex task after changing approval settings. Configuration "
+                "alone does not prove the current task routes approval to the owner."
+            ),
+        },
         "note": (
             "Open a new Codex task after installation before changing session_visible to yes. "
             "Configuration and session visibility do not prove a worker's runtime profile."
@@ -181,6 +196,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Additional selected mixed-swarm preset; repeat as needed.",
     )
     check.add_argument("--json", action="store_true")
+    check.add_argument(
+        "--require-external-review-approval",
+        action="store_true",
+        help=(
+            "Fail unless config.toml routes exact external-review escalation to the owner "
+            "with approvals_reviewer=\"user\" and approval_policy=\"on-request\"."
+        ),
+    )
 
     record = subparsers.add_parser("record")
     record.add_argument("goal_dir", type=Path)
@@ -217,8 +240,18 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 for problem in result["problems"]:
                     print(f"Problem: {problem}")
+                review = result["external_review_approval"]
+                print(
+                    "External review owner approval configured: "
+                    f"{'yes' if review['configured'] else 'no'}"
+                )
+                for problem in review["problems"]:
+                    print(f"External review problem: {problem}")
                 print(result["note"])
-            return 0 if result["configured"] else 1
+            ready = bool(result["configured"])
+            if args.require_external_review_approval:
+                ready = ready and bool(result["external_review_approval"]["configured"])
+            return 0 if ready else 1
         record_profile(
             args.goal_dir,
             layer=args.layer,

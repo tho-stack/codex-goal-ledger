@@ -162,6 +162,60 @@ class InstallerTests(unittest.TestCase):
         self.assertIn('tool_namespace = "agents"', text)
         self.run_installer("--check", "--with-agents", codex_home=codex_home)
 
+    def test_review_approval_configuration_is_explicit_backed_up_and_checkable(self) -> None:
+        codex_home = self.root / "codex-home-review-approval"
+        codex_home.mkdir(parents=True)
+        config = codex_home / "config.toml"
+        config.write_text(
+            'model = "gpt-5.6-sol"\n'
+            'approvals_reviewer = "auto_review"\n'
+            'approval_policy = "never"\n\n'
+            '[projects."/tmp/example"]\n'
+            'trust_level = "trusted"\n',
+            encoding="utf-8",
+        )
+
+        configured = self.run_installer(
+            "--configure-review-approvals", codex_home=codex_home
+        )
+        self.assertIn("Review approval config change", configured.stdout)
+        self.assertIn("Restart Codex or open a new task", configured.stdout)
+        text = config.read_text(encoding="utf-8")
+        self.assertIn('approvals_reviewer = "user"', text)
+        self.assertIn('approval_policy = "on-request"', text)
+        self.assertIn('[projects."/tmp/example"]', text)
+        backups = list(codex_home.glob("config.toml.backup-*"))
+        self.assertEqual(1, len(backups))
+        self.assertIn('approvals_reviewer = "auto_review"', backups[0].read_text())
+
+        checked = self.run_installer(
+            "--check", "--configure-review-approvals", codex_home=codex_home
+        )
+        self.assertIn(
+            "External-review owner approval configuration is current", checked.stdout
+        )
+
+    def test_review_approval_check_reports_auto_review_never(self) -> None:
+        codex_home = self.root / "codex-home-review-drift"
+        codex_home.mkdir(parents=True)
+        (codex_home / "config.toml").write_text(
+            'approvals_reviewer = "auto_review"\n'
+            'approval_policy = "never"\n',
+            encoding="utf-8",
+        )
+        destination = codex_home / "skills" / "codex-goal-ledger"
+        self.run_installer("--destination", destination, codex_home=codex_home)
+        checked = self.run_installer(
+            "--destination",
+            destination,
+            "--check",
+            "--configure-review-approvals",
+            codex_home=codex_home,
+            expected=1,
+        )
+        self.assertIn('root approvals_reviewer must be "user"', checked.stderr)
+        self.assertIn('root approval_policy must be "on-request"', checked.stderr)
+
     def test_owned_agent_drift_requires_explicit_replace_or_forced_uninstall(self) -> None:
         codex_home = self.root / "codex-home-agent-drift"
         self.run_installer("--with-agents", codex_home=codex_home)

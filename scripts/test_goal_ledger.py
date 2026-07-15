@@ -633,7 +633,11 @@ class GoalLedgerTests(unittest.TestCase):
         goal_text = (goal_dir / "goal.md").read_text(encoding="utf-8")
         html_text = (goal_dir / "index.html").read_text(encoding="utf-8")
         self.assertIn("fable_review_rounds: 3", goal_text)
-        self.assertIn("selects 3 sequential read-only Claude review rounds", goal_text)
+        self.assertIn(
+            "authorizes preparing 3 sequential read-only Claude review rounds through "
+            "Anthropic Claude",
+            goal_text,
+        )
         self.assertIn("Ask Fable · 3 rounds", html_text)
         self.validate(goal_dir)
 
@@ -646,8 +650,8 @@ class GoalLedgerTests(unittest.TestCase):
         goal_dir, _ = self.init(fable_feedback="yes")
         goal_text = (goal_dir / "goal.md").read_text(encoding="utf-8")
         self.assertIn(
-            "A recorded Claude Fable choice of `yes` selects the configured read-only "
-            "planning-review rounds without another conversational consent sentence.",
+            "A recorded Claude Fable `yes` is lane authorization to prepare the configured "
+            "reviews for Anthropic Claude through the owner's account",
             goal_text,
         )
         progress = goal_dir / "progress.md"
@@ -660,8 +664,9 @@ class GoalLedgerTests(unittest.TestCase):
         invalid = self.validate(goal_dir, expected=None)
         self.assertNotEqual(0, invalid.returncode)
         self.assertIn(
-            "remove the conversational Claude Fable approval gate; prepare the exact "
-            "manifest and submit native Codex approval automatically",
+            "remove the conversational Claude Fable approval gate; lane authorization permits "
+            "manifest preparation, while exact transmission approval must use the owner-facing "
+            "native Codex checkbox",
             invalid.stderr,
         )
 

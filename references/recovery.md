@@ -39,9 +39,9 @@ Never retry `file://`. Read `evidence/preview-server.json`, then run `serve_dash
 
 Configuration does not refresh an already-open task. Run `execution_profile.py preflight`; it must verify the owned profiles, registrations, and required `[features.multi_agent_v2]` values before routing. Open a new task after installation and check session visibility again. Record runtime confirmation only after the launched worker reports effective model and effort evidence. Never substitute a stale LazyCodex role silently.
 
-### Fable is selected but a conversational approval gate remains
+### Fable is selected but exact approval cannot reach the owner
 
-A recorded Fable choice of `yes` plus `fable_review_rounds` selects the configured sequence. Remove any gate that asks the user to type another consent sentence. Prepare the next exact allow-list with `run_fable_feedback.py --prepare-transmission`, then submit the matching digest-bound command through Codex's native external-transmission approval. Restore the goal from blocked when no other blocker remains, reconcile the current round, then advance. If the native approval denies the exact manifest, record that policy result and do not bypass it.
+A recorded Fable choice of `yes` plus `fable_review_rounds` authorizes preparing the configured sequence; it does not prove exact packet approval. Remove any gate that asks the user to type another consent sentence. Run `execution_profile.py preflight --require-external-review-approval`. If it reports `auto_review`, `never`, or missing settings, use the explicitly authorized installer repair and open a new task. Restore the goal from blocked when no other blocker remains, prepare a fresh allow-list with `run_fable_feedback.py --prepare-transmission`, and submit the matching digest-bound command through the owner-facing native checkbox without editing any manifest file in between. If native policy denies after that exact user action, record the result and do not bypass it.
 
 ### GPT Pro submission or capture was interrupted
 

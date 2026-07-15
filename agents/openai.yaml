@@ -4,7 +4,7 @@ interface:
   icon_small: "./assets/icon-small.svg"
   icon_large: "./assets/icon-large.svg"
   brand_color: "#315E71"
-  default_prompt: "Use $codex-goal-ledger to run this long goal. In the first planning checkpoint, identify extra context that could improve the result, configure optional Claude Fable planning rounds, bounded scientific rescue, and native GPT Pro prompt-plus-ZIP review with cross-platform UI routing, verify multi_agent_v2, preserve durable recovery evidence, and serve an HTTP dashboard that visualizes review loops and truthful progress."
+  default_prompt: "Use $codex-goal-ledger to run this long goal. In the first planning checkpoint, identify extra context that could improve the result, configure optional Claude Fable planning rounds, bounded scientific rescue, and native GPT Pro prompt-plus-ZIP review with cross-platform UI routing, verify multi_agent_v2 and owner-facing external-review approval routing, preserve durable recovery evidence, and serve an HTTP dashboard that visualizes review loops and truthful progress."
 
 policy:
   allow_implicit_invocation: true
