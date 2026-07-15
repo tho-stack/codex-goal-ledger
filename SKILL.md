@@ -1,6 +1,6 @@
 ---
 name: codex-goal-ledger
-description: Run, recover, audit, resume, and honestly close long-running Codex goals with repo-local goal and progress Markdown, generated interactive HTML, custody tracking, evidence gates, and capability-aware execution profiles. Use for overnight or interruption-prone work, durable handoffs, multi-agent recovery, or any task that must remain trustworthy across compaction, restarts, and new sessions.
+description: Run, recover, audit, resume, and honestly close long-running Codex goals with repo-local goal and progress Markdown, generated interactive HTML, custody tracking, evidence gates, capability-aware execution profiles, optional Fable review and rescue, and native GPT Pro prompt-plus-ZIP review. Use for overnight or interruption-prone work, durable handoffs, hard scientific impasses, multi-agent recovery, high-context plan or implementation review, or any task that must remain trustworthy across compaction, restarts, and new sessions.
 ---
 
 # Codex Goal Ledger
@@ -19,6 +19,12 @@ docs/goals/<goal-slug>/
 ├── review-prompt.md      # optional, when selected
 ├── handoff-prompt.md     # optional, when selected
 └── evidence/
+    ├── fable-feedback.md # optional round 1, when selected and completed
+    ├── fable-feedback-round-N.md # optional configured rounds 2-10
+    ├── fable-transport/ # durable raw planning-review transport state
+    ├── fable-rescue/rescue-NNN/ # qualified rescue request, response, reconciliation, outcome, and transport
+    ├── pro-review/<stage>/round-NNN/ # native prompt, ZIP, manifest, submission, full response, and reconciliation
+    └── preview-server.json # generated runtime endpoint evidence
 ```
 
 Shared presentation assets live in `docs/assets/goal-ledger.css` and `docs/assets/goal-ledger.js`.
@@ -32,29 +38,49 @@ Shared presentation assets live in `docs/assets/goal-ledger.css` and `docs/asset
 ## Start or resume
 
 1. Read any user-supplied goal, brief, gate, or policy file in full. Treat explicit choices and hard boundaries as authoritative.
-2. Inspect the repository, current goal-tool state when available, and any existing goal directory before asking questions.
-3. Ask only for missing facts that can materially change execution:
+2. Perform only the bounded discovery needed to make contextual recommendations: inspect the repository, current goal-tool state when available, and any existing goal directory. Do not begin implementation, delegation, or long-running validation during discovery.
+3. Make the first interactive planning checkpoint happen immediately after bounded discovery. Start it with a **Planning input assessment** that separates:
+   - **Required before execution**: only missing facts whose answer can materially change scope, architecture, authorization, or the completion bar;
+   - **Optional, improves result**: at most three high-leverage inputs the user could provide, each stated as **Information**, **What it improves**, and **Default if omitted**.
+   Say `No additional information would materially improve this plan` when the optional lane is empty. Do not ask the user for information the repository or connected tools can discover safely.
+4. Ask only the required missing facts:
    - why the work matters;
    - the user-visible outcome;
    - observable completion criteria;
    - authorization boundaries;
-   - execution profile when the user has not chosen one.
-4. In that planning round, ask one bundled closeout question and recommend a choice for each item:
+   - execution profile when the user has not chosen one, including the primary implementation preset and any mixed-swarm profiles justified by independently owned work.
+   Optional inputs must not block execution. If the user omits or skips one, use its stated default, record any material assumption in `goal.md` or the Decision log, and proceed after the required questions and review choices are resolved.
+5. In that same checkpoint, ask the six independent review, rescue, and handoff choices and recommend a contextual choice for each item:
+   - ask Claude Fable for read-only plan critique plus feature and science/research proposals before implementation; when selected, also ask for 1-10 review rounds (default 1), and state that `yes` selects that configured sequence while every round will still show one exact, hashed file manifest to Codex's native external-transmission approval layer;
+   - enable bounded Claude Fable scientific rescue for qualified hard scientific impasses; recommend `yes` only for hard/scientific goals, otherwise `no`; default to two lineage-scoped incidents, one round per incident, and XHigh effort;
+   - run native GPT Pro review with a GPT-5.6-shaped prompt plus deterministic scoped ZIP, full raw-response custody, and typed reconciliation; recommend `yes` for difficult, ambiguous, scientific, or high-risk plans; default to one required plan round through platform-aware `auto-ui`, with an explicit Safari, Chrome, ChatGPT desktop, owner-handoff, `implementation`, `both`, `advisory`, or 2-3 rounds available when justified;
    - generate `review-prompt.md` for Claude or another independent LLM;
    - run an additional `$codex-review` closeout;
    - generate `handoff-prompt.md` for a new clean GPT session.
-5. Record an explicit `yes` or `no` for all three rows in `goal.md` under **Closeout options**. Keep an unanswered item as `ask`; do not infer consent from silence or close the goal while any row remains `ask`.
-6. Do not ask for ceremonial metadata such as a session name, arbitrary subgoal count, or preferred log length.
-7. Initialize missing artifacts with `scripts/init_goal.py`. Preserve existing artifacts unless the user authorizes replacement.
-8. If a goal-state tool exists and no matching goal is active, create a short pointer objective to `goal.md`; keep the full contract in the repository.
+6. Present each option as an independent checkbox or yes/no toggle, with selectors for Fable rounds, rescue limit, and GPT Pro stage/delivery/gate. Prefer consecutive `request_user_input` interactions of at most three questions each so the ChatGPT app renders proper controls; finish every required selector in this same planning checkpoint. Use one concise Markdown checklist only when structured input is unavailable. Never split the choices across wakeups or defer them to a status, verification, or closeout response.
+7. Wait only for required missing facts and unresolved review choices unless the user explicitly asks to pause for optional context. Do not initialize the execution plan, implement, spawn or delegate workers, start a long-running command, or enter unattended execution while a required item remains unresolved.
+8. Record an explicit `yes` or `no` for all six rows in `goal.md` under **Closeout options**, plus the Fable and GPT Pro selectors in frontmatter. Use `ask` only while waiting at this planning checkpoint; never infer consent from silence. Once either Fable lane is `yes`, do not ask for another conversational consent sentence within the recorded repository scope. A GPT Pro `yes` pre-approves only the exact generated request plus hashed ZIP for ChatGPT Pro; follow the live Computer Use confirmation policy at action time and ask again only for expanded transmission, destination, or goal scope. Recommend one planning round normally, two when reconciliation benefits from a follow-up critique, and more than three only when the user explicitly wants the added usage.
+9. Do not ask for ceremonial metadata such as a session name, arbitrary subgoal count, or preferred log length.
+10. Initialize missing artifacts with `scripts/init_goal.py`. Preserve existing artifacts unless the user authorizes replacement.
+11. If a goal-state tool exists and no matching goal is active, create a short pointer objective to `goal.md`; keep the full contract in the repository.
 
 For difficult quality-first overnight builds, recommend this profile without making it universal:
 
 - planning and architecture: GPT-5.6 Sol at `xhigh`; reserve `max` for the hardest pass;
-- implementation: GPT-5.6 Terra at `max` when the runtime supports that selection;
+- implementation: `goal-ledger-implementer` at Luna Max by default; optionally select Luna High, Terra Ultra, Sol Medium, Sol XHigh, or Sol Ultra from the owned fleet;
 - final adversarial review: GPT-5.6 Sol at `xhigh`, or `max` when justified.
 
-Preserve explicit user selections. Record both requested and effective profiles. If the current surface cannot select a model or reasoning level, say so and record the fallback; never imply that a switch occurred. A subagent tool without model controls does not prove a model assignment. Read [model-execution-profile.md](references/model-execution-profile.md) when routing or runtime capability matters.
+Preserve explicit user selections. Record requested, invoked, and effective profiles separately. Before unattended implementation, run `scripts/execution_profile.py preflight --implementer <agent-name>` for the primary preset; it checks the owned agent files, registrations, and `[features.multi_agent_v2]` values `hide_spawn_agent_metadata = false`, `max_concurrent_threads_per_session = 8`, and `tool_namespace = "agents"`. Configuration proves only `configured`, and a newly opened task proves only `session-visible`. Record any preset as effective only when that worker runtime confirms its model and effort. Use a mixed implementation swarm only when work has independent ownership boundaries, list every invoked role in Custody and evidence, and never infer that all workers used the primary preset. Never depend on a LazyCodex role or stale role advertised by an already-open task. Read [model-execution-profile.md](references/model-execution-profile.md) for the full fleet and routing rules.
+
+When **Claude Fable peer feedback** is `yes`, run the configured number of sequential, read-only Claude CLI rounds. Before each round, choose only the additional repository files genuinely needed, then run `scripts/run_fable_feedback.py <goal-dir> --prepare-transmission` with repeated `--context-file <repo-relative-path>` arguments. The runner always includes `goal.md`, `progress.md`, and prior-round artifacts; it emits exact paths, byte counts, SHA-256 values, destination, tools, and an `approval_digest` without contacting Claude. Immediately submit the matching direct `claude -p` invocation outside the Codex sandbox through `require_escalated`, with the manifest details in the native approval justification, and pass the digest as `--approve-transmission <SHA256>`. Do not ask for a reply sentence, create a durable consent gate, idle, or mark the goal blocked before submitting that native approval. The digest becomes stale if any approved file changes. Claude receives only the embedded allow-listed files and has no local repository tools. Use `high` effort normally, `xhigh` only for difficult, ambiguous, or high-risk planning, and never select `max` automatically. After the goal contract and initial phase plan are stable—but before implementation—start round 1 immediately. Each round returns critique, optional information, up to three feature opportunities, and up to three science/research hypotheses with validation methods. Treat everything as advisory: verify concerns and proposals, record each accepted/rejected/deferred decision, and update the contract only for accepted in-scope items. Default adjacent and future proposals to deferred; adding them to the active goal requires normal scope-expansion authorization. Render and validate after reconciliation, then prepare a fresh manifest for the next round. Never run later rounds against an unreconciled plan. Round 1 is `evidence/fable-feedback.md`; later rounds are `evidence/fable-feedback-round-N.md`. Record the passing **Claude Fable peer feedback** Verification row only after every configured round is reconciled. If native approval is denied, record the policy decision without bypassing it. If direct escalated `claude -p` still cannot see the logged-in account, follow the tmux diagnostic and fallback in [fable-peer.md](references/fable-peer.md); a sandboxed `auth status` result alone is not proof that the account is logged out. Do not silently substitute another model.
+
+When **Claude Fable scientific rescue** is `yes`, read and follow [fable-rescue.md](references/fable-rescue.md). Trigger it only from a schema-valid incident candidate after operational failures are excluded. Use `scripts/run_fable_rescue.py`; never issue an ad-hoc raw Claude call for a ledger rescue. The runner persists the candidate, request, exact manifest, raw stdout/stderr, transport state, parsed response, usage, reconciliation, and outcome under `evidence/fable-rescue/rescue-NNN/`. It hash-locks predictions before the experiment and requires an outcome against that lock before another incident. Rescue is advisory and its hashes may never appear in completion evidence.
+
+Both Fable runners use the shared durable transport. Raw output is flushed and atomically finalized inside the goal before parsing. If Codex's outer command wrapper detaches, expires, or loses stdout, inspect the transport record and rerun the identical manifest-bound runner command: it reuses a completed matching response, refuses a duplicate while the recorded PID is alive, and never silently resubmits. Do not fall back to a raw `claude -p` rerun just because wrapper output was empty.
+
+When **GPT Pro review** is `yes`, read and follow [pro-review.md](references/pro-review.md). Goal Ledger owns this workflow; never invoke, read, or depend on a separate `$pro` skill. Prepare every selected stage and round with `scripts/run_pro_review.py prepare`, which creates an immutable GPT-5.6-shaped `request.md`, deterministic scoped `context-packet.zip`, exact source/member manifest, a platform-aware `delivery-plan.json`, and durable state. With `auto-ui`, use Computer Use to probe the candidates in order: Safari, Chrome, then the ChatGPT desktop app on macOS; Chrome then the desktop app on Windows or Linux. A surface is ready only when it is inspectable, authenticated, visibly offers GPT Pro or Pro Extended, and supports file upload plus text entry. Record every probe with `record-attempt`. An explicit delivery surface wins over auto-routing. If no assisted surface is ready, give the owner the generated `manual-handoff.md`, request, and ZIP; keep the round at `manual-handoff-ready` rather than prematurely blocking the goal. Never downgrade to prompt-only. After a ready assisted surface or owner submission, attach only the generated ZIP, paste only the generated request, submit once, and record the actual transport. Poll the existing thread patiently, capture the complete response byte-for-byte, record it with `record-response`, verify every claim locally, and record typed `FIX`, `DEFER`, `DISMISS`, or `QUESTION` reconciliation. Required plan review must be signed off before Build; required implementation review must be signed off before completion. Recover from `state.json` and never resubmit a packet merely because the Codex turn or wrapper ended.
+
+Before unattended execution, put every selected closeout lane into the execution plan. Generate selected prompt artifacts as soon as the contract is stable, and run a selected additional Codex review automatically after verification without waiting for the user to return. Never postpone a previously selected review until the final response.
 
 ## Operate
 
@@ -80,10 +106,12 @@ After every material ledger update:
 1. render `index.html`;
 2. run the validator;
 3. check selected closeout prompts for synchronization;
-4. open the generated progress dashboard in Codex's in-app preview, or reload its existing preview tab;
+4. start or reuse `scripts/serve_dashboard.py <goal-dir>`, health-check it, and open or reload its HTTP URL in the same Codex task's in-app Browser;
 5. correct stale, contradictory, or unsupported claims before continuing.
 
-Preview is an orchestration action, not a renderer side effect. Reuse the Codex preview tab and keep it available as a user-facing deliverable. Never shell-open a browser, launch an external browser executable, or hardcode an application path. If the active Codex surface has no in-app preview capability, report that limitation instead of substituting an external program.
+The dashboard review circuit is derived from Fable artifacts, GPT Pro state and reconciliation, rescue incidents, Verification rows, and phase or gate state. Do not hand-edit graph state or invent a dashboard-only completion source. Show review returns as revision loops and keep run, evidence, reviews, and gates as separate discrete progress tracks; never collapse them into one weighted percentage.
+
+Preview is an orchestration action, not a renderer side effect. Never navigate to `file://`. The preview server binds only to a connected Tailscale IPv4 address when available and otherwise to `127.0.0.1`; it serves the goal directory plus the allow-listed shared dashboard CSS and JavaScript, reports the actual port, writes `evidence/preview-server.json`, and exposes a health endpoint. Use the Browser skill from the same Codex task: claim the matching in-app tab when it already exists or create one, navigate or reload the reported HTTP URL, request browser visibility, verify the page DOM, and retain that tab as a `deliverable` when finalizing browser work. Server health or a hidden tab is not proof that the dashboard was presented in the task. If visibility cannot be confirmed, keep browser QA pending or blocked and report the URL; do not claim the preview loaded in-session. Never shell-open a browser, launch an external browser executable, or hardcode an application path. If the active Codex surface has no in-app Browser capability, report that limitation without claiming browser QA passed.
 
 When the work log becomes unwieldy, move older detail into `evidence/log-<date>.md`, link it, and retain only the recent decision-bearing entries in `progress.md`.
 
@@ -107,7 +135,7 @@ Close only when every required success criterion is evidenced, all blocking gate
 Before closing:
 
 1. resolve every **Closeout options** row to explicit `yes` or `no`;
-2. generate each selected prompt and verify it with `generate_closeout_prompts.py --check`;
+2. verify every configured Fable round with `run_fable_feedback.py --check`, every selected GPT Pro lane with `run_pro_review.py check --require-closed`, and each selected prompt with `generate_closeout_prompts.py --check`;
 3. if additional Codex review is `yes`, follow `$codex-review`: treat findings as advisory, verify each against the real code, fix only accepted findings, rerun affected checks and review after edits, and never push unless the user requested it;
 4. update both Markdown frontmatters to `status: complete`;
 5. record the actual final repository/commit state without implying an unmade commit;
@@ -120,11 +148,11 @@ If a concrete condition prevents meaningful work, the repository ledger may use 
 
 Resolve these paths relative to this skill directory.
 
-Installing or replacing a global skill is an external write. Run the installer only after the user authorizes that destination. It defaults to `$CODEX_HOME/skills/codex-goal-ledger`, or `~/.codex/skills/codex-goal-ledger` when `CODEX_HOME` is unset, refuses drift by default, and preserves the previous directory when `--replace` is explicit.
+Installing or replacing a global skill or agent profile is an external write. Run the installer only after the user authorizes that destination. It defaults to `$CODEX_HOME/skills/codex-goal-ledger`, or `~/.codex/skills/codex-goal-ledger` when `CODEX_HOME` is unset, refuses drift by default, and preserves replaced files when `--replace` is explicit. `--with-agents` installs only the owned implementer fleet and reviewer plus a delimited config block, and verifies or configures the three required `[features.multi_agent_v2]` values. It never modifies or removes LazyCodex remnants. Open a new task after agent installation before checking session visibility.
 
 ```bash
-python3 scripts/install_skill.py
-python3 scripts/install_skill.py --check
+python3 scripts/install_skill.py --with-agents
+python3 scripts/install_skill.py --check --with-agents
 
 python3 scripts/init_goal.py \
   --project-root . \
@@ -133,17 +161,77 @@ python3 scripts/init_goal.py \
   --why "Why this matters" \
   --outcome "Observable end state" \
   --planning-profile "gpt-5.6-sol xhigh" \
-  --implementation-profile "gpt-5.6-terra max" \
+  --implementation-agent "goal-ledger-implementer-sol-xhigh" \
+  --swarm-implementer "goal-ledger-implementer-luna-high" \
+  --swarm-implementer "goal-ledger-implementer-terra-ultra" \
+  --fable-profile "claude-fable-5 high" \
   --review-profile "gpt-5.6-sol xhigh" \
+  --fable-feedback yes \
+  --fable-review-rounds 2 \
+  --fable-rescue yes \
+  --fable-rescue-max-incidents 2 \
+  --fable-rescue-rounds-per-incident 1 \
+  --fable-rescue-effort xhigh \
+  --pro-review yes \
+  --pro-review-rounds 1 \
+  --pro-review-stage plan \
+  --pro-review-delivery auto-ui \
+  --pro-review-gate required \
   --external-review-prompt yes \
   --codex-review yes \
   --clean-session-handoff yes
 
 python3 scripts/render_goal.py docs/goals/overnight-build
+python3 scripts/execution_profile.py preflight \
+  --implementer goal-ledger-implementer-sol-xhigh \
+  --swarm-implementer goal-ledger-implementer-luna-high \
+  --swarm-implementer goal-ledger-implementer-terra-ultra
+python3 scripts/run_fable_feedback.py docs/goals/overnight-build
+python3 scripts/run_fable_feedback.py docs/goals/overnight-build --prepare-transmission
+python3 scripts/run_fable_feedback.py docs/goals/overnight-build \
+  --approve-transmission <SHA256>
+python3 scripts/run_fable_feedback.py docs/goals/overnight-build --check
+python3 scripts/run_fable_rescue.py docs/goals/overnight-build \
+  --candidate rescue-candidate.json --prepare-transmission
+python3 scripts/run_fable_rescue.py docs/goals/overnight-build \
+  --candidate rescue-candidate.json --approve-transmission <SHA256>
+python3 scripts/run_fable_rescue.py docs/goals/overnight-build \
+  --incident 1 --reconcile reconciliation.json
+python3 scripts/run_fable_rescue.py docs/goals/overnight-build \
+  --incident 1 --record-outcome outcome.json
+python3 scripts/run_fable_rescue.py docs/goals/overnight-build \
+  --incident 1 --supplement path/requested-by-fable.md --prepare-transmission
+python3 scripts/run_fable_rescue.py docs/goals/overnight-build \
+  --incident 1 --record-owner-resolution owner-resolution.json
+python3 scripts/run_fable_rescue.py docs/goals/overnight-build --check
+python3 scripts/run_pro_review.py prepare docs/goals/overnight-build \
+  --stage plan --round 1 \
+  --decision "Approve this plan for implementation." \
+  --context-file path/to/operative-plan.md
+python3 scripts/run_pro_review.py record-attempt docs/goals/overnight-build \
+  --stage plan --round 1 --surface safari-assisted \
+  --result ready --detail "Authenticated Pro Extended mode and file upload are visible."
+python3 scripts/run_pro_review.py record-submission docs/goals/overnight-build \
+  --stage plan --round 1 --model-visible "Pro Extended" \
+  --transport safari-assisted --thread "Overnight build plan review"
+python3 scripts/run_pro_review.py record-response docs/goals/overnight-build \
+  --stage plan --round 1 --response-file /path/to/full-pro-response.md
+python3 scripts/run_pro_review.py reconcile docs/goals/overnight-build \
+  --stage plan --round 1 --reconciliation-file reconciliation.json
+python3 scripts/run_pro_review.py check docs/goals/overnight-build --require-closed
 python3 scripts/generate_closeout_prompts.py docs/goals/overnight-build
 python3 scripts/validate_goal.py docs/goals/overnight-build
+python3 scripts/serve_dashboard.py docs/goals/overnight-build
+python3 scripts/serve_dashboard.py docs/goals/overnight-build --check
 python3 scripts/test_goal_ledger.py
+python3 scripts/test_execution_profile.py
+python3 scripts/test_fable_feedback.py
+python3 scripts/test_fable_rescue.py
+python3 scripts/test_fable_transport.py
+python3 scripts/test_pro_review.py
+python3 scripts/test_review_graph.py
 python3 scripts/test_install_skill.py
+python3 scripts/test_preview_server.py
 ```
 
 Use `render_goal.py --sync-assets` after upgrading this skill's shipped CSS or JavaScript. Use `render_goal.py --check` and `generate_closeout_prompts.py --check` in validation lanes to detect stale generated artifacts without modifying files. Paths in examples are repository-relative or supplied at runtime; do not embed local application or dependency paths.
@@ -151,10 +239,13 @@ Use `render_goal.py --sync-assets` after upgrading this skill's shipped CSS or J
 ## References
 
 - [workflow.md](references/workflow.md): full start, operate, recover, and close protocol.
+- [fable-peer.md](references/fable-peer.md): optional read-only Fable planning feedback contract.
+- [fable-rescue.md](references/fable-rescue.md): qualified scientific-rescue triggers, schemas, prediction lock, durable transport, and recovery.
+- [pro-review.md](references/pro-review.md): self-contained GPT Pro prompt-plus-ZIP preparation, cross-platform UI routing, manual fallback, full response custody, reconciliation, gates, and recovery.
 - [closeout-kit.md](references/closeout-kit.md): planning choices, external-review prompt, Codex review, and clean-session handoff contract.
 - [state-model.md](references/state-model.md): allowed states, invariants, and reconciliation rules.
 - [recovery.md](references/recovery.md): failure-mode playbook and evidence-preserving recovery order.
-- [model-execution-profile.md](references/model-execution-profile.md): requested/effective model routing and fallbacks.
+- [model-execution-profile.md](references/model-execution-profile.md): requested, invoked, and effective model routing and fallbacks.
 - [prompting-gpt-5p6.md](references/prompting-gpt-5p6.md): lean prompt contract used by this skill.
 - [progress-template.md](references/progress-template.md): Markdown schema and section contract.
 - [latest-model-baseline.md](references/latest-model-baseline.md): dated capability snapshot; verify drift-prone claims.

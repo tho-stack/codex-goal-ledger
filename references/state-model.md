@@ -65,6 +65,10 @@ Allowed values are `pending`, `active`, `blocked`, `complete`, and `skipped`. A 
 - Complete goals have no pending/fail/blocked required verification.
 - Complete goals have no open blocking gate.
 - Generated HTML carries the digest of the current `goal.md` and `progress.md`.
-- Requested execution profile and effective execution profile are distinct fields.
+- Requested, invoked, and effective execution profiles are distinct fields. Configuration, session visibility, and runtime confirmation are distinct evidence states.
+- A required GPT Pro plan review must be reconciled and signed off before Build is active or complete; a required implementation review must be signed off before goal completion.
+- GPT Pro transport state is independent of goal state. `packet-ready`, `ui-ready`, and `manual-handoff-ready` are resumable round states and do not alone make the goal blocked.
+- Dashboard review nodes and progress tracks are derived views. Their states must come from review artifacts, Verification rows, phase rows, and gates rather than a separate mutable dashboard record.
+- A preview URL with a past health check is historical evidence. Treat a stopped or failed endpoint as stale until restarted and checked again.
 
 When facts conflict, preserve the more conservative state and record the contradiction as an open gate until evidence resolves it.

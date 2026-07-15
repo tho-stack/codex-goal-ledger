@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import sys
 
+from agent_profiles import DEFAULT_IMPLEMENTER, IMPLEMENTER_BY_NAME, IMPLEMENTER_NAMES
 from ledger_common import (
     LedgerError,
     code_fences_balanced,
@@ -27,6 +28,12 @@ DEFAULT_CRITERIA = (
     "Required validation checks pass and their evidence is recorded in `progress.md`.",
     "Canonical Markdown and the generated dashboard carry the same current digest.",
 )
+DEFAULT_PLANNING_INPUT_ASSESSMENT = (
+    "- **Required before execution:** None.\n"
+    "- **Optional, improves result:** No additional information would materially improve this plan."
+)
+MAX_FABLE_ROUNDS = 10
+MAX_PRO_ROUNDS = 3
 
 
 def _valid_date(value: str) -> str:
@@ -37,6 +44,48 @@ def _valid_date(value: str) -> str:
     if parsed.isoformat() != value:
         raise argparse.ArgumentTypeError("date must use YYYY-MM-DD")
     return value
+
+
+def _fable_rounds(value: str) -> int:
+    try:
+        rounds = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("Fable review rounds must be an integer from 1 to 10") from exc
+    if not 1 <= rounds <= MAX_FABLE_ROUNDS or str(rounds) != value:
+        raise argparse.ArgumentTypeError("Fable review rounds must be an integer from 1 to 10")
+    return rounds
+
+
+def _rescue_incidents(value: str) -> int:
+    try:
+        incidents = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("Fable rescue incidents must be an integer from 1 to 10") from exc
+    if not 1 <= incidents <= 10 or str(incidents) != value:
+        raise argparse.ArgumentTypeError("Fable rescue incidents must be an integer from 1 to 10")
+    return incidents
+
+
+def _rescue_rounds(value: str) -> int:
+    try:
+        rounds = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("Fable rescue rounds per incident must be 1") from exc
+    if rounds != 1 or str(rounds) != value:
+        raise argparse.ArgumentTypeError(
+            "Fable rescue rounds per incident must be 1; use a delta-gated second incident"
+        )
+    return rounds
+
+
+def _pro_rounds(value: str) -> int:
+    try:
+        rounds = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("GPT Pro review rounds must be an integer from 1 to 3") from exc
+    if not 1 <= rounds <= MAX_PRO_ROUNDS or str(rounds) != value:
+        raise argparse.ArgumentTypeError("GPT Pro review rounds must be an integer from 1 to 3")
+    return rounds
 
 
 def _single_line(name: str, value: str, *, forbid_pipe: bool = False) -> str:
@@ -99,9 +148,117 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Observable completion criterion; repeat for multiple criteria.",
     )
     parser.add_argument("--mode", default="overnight-capable")
-    parser.add_argument("--planning-profile", default="current available runtime")
-    parser.add_argument("--implementation-profile", default="current available runtime")
-    parser.add_argument("--review-profile", default="current available runtime")
+    parser.add_argument(
+        "--planning-input-assessment",
+        default=DEFAULT_PLANNING_INPUT_ASSESSMENT,
+        help=(
+            "Planning assessment Markdown recorded after bounded discovery; include required "
+            "inputs and at most three optional inputs with benefit and default."
+        ),
+    )
+    parser.add_argument("--planning-profile", default="gpt-5.6-sol xhigh")
+    parser.add_argument(
+        "--implementation-agent",
+        choices=IMPLEMENTER_NAMES,
+        default=DEFAULT_IMPLEMENTER.name,
+        help="Owned implementation-agent preset recorded in the execution contract.",
+    )
+    parser.add_argument(
+        "--implementation-profile",
+        default=None,
+        help="Requested implementation model and effort; defaults to the selected agent preset.",
+    )
+    parser.add_argument(
+        "--swarm-implementer",
+        action="append",
+        choices=IMPLEMENTER_NAMES,
+        default=[],
+        help=(
+            "Additional owned implementation preset for an independently partitioned mixed "
+            "swarm; repeat as needed."
+        ),
+    )
+    parser.add_argument("--fable-profile", default="claude-fable-5 high")
+    parser.add_argument("--review-profile", default="gpt-5.6-sol xhigh")
+    parser.add_argument(
+        "--fable-feedback",
+        choices=("ask", "yes", "no"),
+        default="ask",
+        help="Whether planning should request read-only Claude Fable feedback (default: ask).",
+    )
+    parser.add_argument(
+        "--fable-review-rounds",
+        type=_fable_rounds,
+        default=1,
+        help="Number of sequential Fable review rounds selected by a yes choice (1-10).",
+    )
+    parser.add_argument(
+        "--fable-rescue",
+        choices=("ask", "yes", "no"),
+        default="ask",
+        help="Whether hard scientific impasses may use bounded Fable rescue (default: ask).",
+    )
+    parser.add_argument(
+        "--fable-rescue-max-incidents",
+        type=_rescue_incidents,
+        default=2,
+        help="Maximum rescue incidents shared by a goal lineage (default: 2).",
+    )
+    parser.add_argument(
+        "--fable-rescue-rounds-per-incident",
+        type=_rescue_rounds,
+        default=1,
+        help="Rescue rounds per incident (fixed at 1; use a delta-gated second incident).",
+    )
+    parser.add_argument(
+        "--fable-rescue-effort",
+        choices=("high", "xhigh"),
+        default="xhigh",
+    )
+    parser.add_argument(
+        "--fable-rescue-lineage",
+        default=None,
+        help="Shared incident-budget lineage; defaults to the goal slug.",
+    )
+    parser.add_argument(
+        "--pro-review",
+        choices=("ask", "yes", "no"),
+        default="ask",
+        help="Whether to run native GPT Pro review with a prompt plus scoped ZIP (default: ask).",
+    )
+    parser.add_argument(
+        "--pro-review-rounds",
+        type=_pro_rounds,
+        default=1,
+        help="Number of GPT Pro rounds for each selected stage (1-3).",
+    )
+    parser.add_argument(
+        "--pro-review-stage",
+        choices=("plan", "implementation", "both"),
+        default="plan",
+        help="Review the plan, implementation, or both (default: plan).",
+    )
+    parser.add_argument(
+        "--pro-review-delivery",
+        choices=(
+            "auto-ui",
+            "safari-assisted",
+            "chrome-assisted",
+            "chatgpt-desktop",
+            "owner-handoff",
+        ),
+        default="auto-ui",
+        help=(
+            "Use platform-aware Safari/Chrome/ChatGPT routing, one explicit surface, or "
+            "prepare an owner handoff (default: auto-ui)."
+        ),
+    )
+    parser.add_argument(
+        "--pro-review-gate",
+        choices=("required", "advisory"),
+        default="required",
+        help="Whether signed-off reconciliation is a hard gate or advisory.",
+    )
     parser.add_argument(
         "--external-review-prompt",
         choices=("ask", "yes", "no"),
@@ -140,9 +297,49 @@ def initialize(args: argparse.Namespace) -> tuple[Path, list[Path], list[Path]]:
     outcome = _markdown_block("outcome", args.outcome)
 
     mode = _single_line("mode", args.mode)
+    planning_input_assessment = _markdown_block(
+        "planning input assessment", args.planning_input_assessment
+    )
     planning = _single_line("planning profile", args.planning_profile, forbid_pipe=True)
+    implementation_agent = _single_line(
+        "implementation agent", args.implementation_agent, forbid_pipe=True
+    )
+    implementation_value = (
+        args.implementation_profile
+        if args.implementation_profile is not None
+        else IMPLEMENTER_BY_NAME[implementation_agent].requested_profile
+    )
     implementation = _single_line(
-        "implementation profile", args.implementation_profile, forbid_pipe=True
+        "implementation profile", implementation_value, forbid_pipe=True
+    )
+    swarm_names = tuple(
+        dict.fromkeys(
+            name for name in args.swarm_implementer if name != implementation_agent
+        )
+    )
+    implementation_swarm = (
+        ", ".join(
+            f"`{name}` ({IMPLEMENTER_BY_NAME[name].requested_profile})"
+            for name in swarm_names
+        )
+        if swarm_names
+        else "none"
+    )
+    fable = _single_line("Fable profile", args.fable_profile, forbid_pipe=True)
+    fable_rounds = args.fable_review_rounds
+    fable_authorization = (
+        f"{fable_rounds} sequential read-only Claude review round"
+        + ("" if fable_rounds == 1 else "s")
+    )
+    pro_stage_label = {
+        "plan": "planning",
+        "implementation": "implementation",
+        "both": "planning and implementation",
+    }[args.pro_review_stage]
+    pro_authorization = (
+        f"{args.pro_review_rounds} native GPT Pro round"
+        + ("" if args.pro_review_rounds == 1 else "s")
+        + f" for {pro_stage_label}"
     )
     review = _single_line("review profile", args.review_profile, forbid_pipe=True)
     criteria = [
@@ -190,9 +387,29 @@ def initialize(args: argparse.Namespace) -> tuple[Path, list[Path], list[Path]]:
         "WHY": why,
         "OUTCOME": outcome,
         "SUCCESS_CRITERIA": criteria_markdown,
+        "PLANNING_INPUT_ASSESSMENT": planning_input_assessment,
         "PLANNING_PROFILE": planning,
+        "IMPLEMENTATION_AGENT": implementation_agent,
         "IMPLEMENTATION_PROFILE": implementation,
+        "IMPLEMENTATION_SWARM": implementation_swarm,
+        "FABLE_PROFILE": fable,
+        "FABLE_REVIEW_ROUNDS": str(fable_rounds),
+        "FABLE_RESCUE_MAX_INCIDENTS": str(args.fable_rescue_max_incidents),
+        "FABLE_RESCUE_ROUNDS": str(args.fable_rescue_rounds_per_incident),
+        "FABLE_RESCUE_EFFORT": args.fable_rescue_effort,
+        "FABLE_RESCUE_LINEAGE": _single_line(
+            "Fable rescue lineage", args.fable_rescue_lineage or slug
+        ),
+        "PRO_REVIEW_ROUNDS": str(args.pro_review_rounds),
+        "PRO_REVIEW_STAGE": args.pro_review_stage,
+        "PRO_REVIEW_DELIVERY": args.pro_review_delivery,
+        "PRO_REVIEW_GATE": args.pro_review_gate,
+        "PRO_REVIEW_AUTHORIZATION": pro_authorization,
+        "FABLE_AUTHORIZATION": fable_authorization,
         "REVIEW_PROFILE": review,
+        "FABLE_FEEDBACK": args.fable_feedback,
+        "FABLE_RESCUE": args.fable_rescue,
+        "PRO_REVIEW": args.pro_review,
         "EXTERNAL_REVIEW_PROMPT": args.external_review_prompt,
         "CODEX_REVIEW": args.codex_review,
         "CLEAN_SESSION_HANDOFF": args.clean_session_handoff,

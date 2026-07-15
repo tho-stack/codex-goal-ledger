@@ -32,7 +32,7 @@ Output: goal.md, progress.md, generated index.html, and final closeout
 Stop rules: retry limits, blockers, completion bar, and smallest missing question
 ```
 
-Ask only for a missing field that can change the path. Preserve explicit user values instead of replacing them with keyword maps or global defaults.
+Ask only for a missing field that can change the path. Separately identify up to three optional inputs that would materially improve the result; name the benefit and the default assumption if omitted. Optional inputs never block execution. Preserve explicit user values instead of replacing them with keyword maps or global defaults.
 
 ## Long-running behavior
 

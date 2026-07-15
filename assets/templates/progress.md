@@ -1,5 +1,5 @@
 ---
-ledger_version: 2
+ledger_version: 7
 goal_slug: {{SLUG}}
 status: active
 execution_health: healthy
@@ -42,6 +42,7 @@ Confirm the contract, execution profile, and first observable milestone.
 | --- | --- | --- |
 | Ledger initialization | pass | `goal.md`, `progress.md`, `index.html`, and shared assets exist. |
 | Completion contract | pending | Review the generated goal before implementation. |
+| HTTP dashboard preview | pending | Serve HTTP, then present and verify a visible in-app Browser tab in this Codex task; never use `file://`. |
 
 ## Custody
 

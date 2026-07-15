@@ -7,9 +7,13 @@ import argparse
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
+import tomllib
+
+from agent_profiles import AGENT_NAMES, PROFILE_BY_NAME
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
@@ -17,13 +21,311 @@ SKILL_NAME = "codex-goal-ledger"
 PACKAGE_ENTRIES = ("SKILL.md", "agents", "assets", "references", "scripts")
 IGNORED_NAMES = frozenset({".DS_Store", "__pycache__"})
 IGNORED_SUFFIXES = frozenset({".pyc", ".pyo"})
+AGENT_SOURCE = PACKAGE_ROOT / "assets" / "agent-profiles"
+MANAGED_BEGIN = "# BEGIN codex-goal-ledger managed agents"
+MANAGED_END = "# END codex-goal-ledger managed agents"
+MULTI_AGENT_SECTION = "features.multi_agent_v2"
+MULTI_AGENT_SETTINGS = {
+    "hide_spawn_agent_metadata": False,
+    "max_concurrent_threads_per_session": 8,
+    "tool_namespace": "agents",
+}
+
+
+def default_codex_home() -> Path:
+    configured = os.environ.get("CODEX_HOME")
+    return Path(configured).expanduser() if configured else Path.home() / ".codex"
 
 
 def default_destination() -> Path:
     """Return the portable Codex skill destination."""
-    configured = os.environ.get("CODEX_HOME")
-    codex_home = Path(configured).expanduser() if configured else Path.home() / ".codex"
-    return codex_home / "skills" / SKILL_NAME
+    return default_codex_home() / "skills" / SKILL_NAME
+
+
+def managed_agent_block() -> str:
+    rows = [MANAGED_BEGIN]
+    for name in AGENT_NAMES:
+        rows.extend(
+            (
+                f"[agents.{name}]",
+                f'config_file = "./agents/{name}.toml"',
+                "",
+            )
+        )
+    rows.append(MANAGED_END)
+    return "\n".join(rows)
+
+
+def _managed_pattern() -> re.Pattern[str]:
+    return re.compile(
+        rf"(?ms)^{re.escape(MANAGED_BEGIN)}\n.*?^{re.escape(MANAGED_END)}\n?"
+    )
+
+
+def _validate_toml(text: str, path: Path) -> None:
+    try:
+        tomllib.loads(text or "\n")
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"refusing invalid TOML for {path}: {exc}") from exc
+
+
+def _config_with_agents(config_text: str, config_path: Path, *, replace: bool) -> str:
+    _validate_toml(config_text, config_path)
+    if config_text.count(MANAGED_BEGIN) != config_text.count(MANAGED_END):
+        raise ValueError(f"unbalanced Goal Ledger managed markers in {config_path}")
+    pattern = _managed_pattern()
+    matches = list(pattern.finditer(config_text))
+    if len(matches) > 1:
+        raise ValueError(f"multiple Goal Ledger managed blocks in {config_path}")
+
+    outside = pattern.sub("", config_text)
+    for name in AGENT_NAMES:
+        if re.search(rf"(?m)^\[agents\.{re.escape(name)}\]\s*$", outside):
+            raise ValueError(
+                f"refusing unmanaged [agents.{name}] registration in {config_path}"
+            )
+
+    block = managed_agent_block()
+    if matches:
+        existing = matches[0].group(0).rstrip("\n")
+        if existing != block and not replace:
+            raise FileExistsError(
+                f"managed agent registration differs in {config_path}; rerun with --replace"
+            )
+        candidate = pattern.sub(block + "\n", config_text, count=1)
+    else:
+        prefix = config_text.rstrip()
+        candidate = (prefix + "\n\n" if prefix else "") + block + "\n"
+    _validate_toml(candidate, config_path)
+    return candidate
+
+
+def _config_without_agents(config_text: str, config_path: Path) -> str:
+    _validate_toml(config_text, config_path)
+    if config_text.count(MANAGED_BEGIN) != config_text.count(MANAGED_END):
+        raise ValueError(f"unbalanced Goal Ledger managed markers in {config_path}")
+    pattern = _managed_pattern()
+    matches = list(pattern.finditer(config_text))
+    if len(matches) > 1:
+        raise ValueError(f"multiple Goal Ledger managed blocks in {config_path}")
+    if not matches:
+        return config_text
+    candidate = pattern.sub("", config_text, count=1).rstrip() + "\n"
+    _validate_toml(candidate, config_path)
+    return candidate
+
+
+def _toml_scalar(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    raise TypeError(f"unsupported TOML scalar: {value!r}")
+
+
+def multi_agent_config_problems(config_path: Path) -> list[str]:
+    if not config_path.is_file():
+        return [f"missing multi-agent configuration: {config_path}"]
+    try:
+        parsed = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return [f"cannot validate multi-agent configuration {config_path}: {exc}"]
+    section: object = parsed
+    for part in MULTI_AGENT_SECTION.split("."):
+        if not isinstance(section, dict) or part not in section:
+            return [f"missing [{MULTI_AGENT_SECTION}] in {config_path}"]
+        section = section[part]
+    if not isinstance(section, dict):
+        return [f"[{MULTI_AGENT_SECTION}] is not a table in {config_path}"]
+    problems = []
+    for key, expected in MULTI_AGENT_SETTINGS.items():
+        actual = section.get(key)
+        if actual != expected or type(actual) is not type(expected):
+            problems.append(
+                f"[{MULTI_AGENT_SECTION}] {key} must be {_toml_scalar(expected)}; "
+                f"found {_toml_scalar(actual) if isinstance(actual, (bool, int, str)) else actual!r}"
+            )
+    return problems
+
+
+def _config_with_multi_agent(config_text: str, config_path: Path, *, replace: bool) -> str:
+    _validate_toml(config_text, config_path)
+    problems = multi_agent_config_problems(config_path) if config_path.is_file() else ["missing"]
+    if not problems:
+        return config_text
+
+    header_pattern = re.compile(rf"(?m)^\[{re.escape(MULTI_AGENT_SECTION)}\][ \t]*$")
+    match = header_pattern.search(config_text)
+    if match is None:
+        prefix = config_text.rstrip()
+        rows = [f"[{MULTI_AGENT_SECTION}]"] + [
+            f"{key} = {_toml_scalar(value)}" for key, value in MULTI_AGENT_SETTINGS.items()
+        ]
+        candidate = (prefix + "\n\n" if prefix else "") + "\n".join(rows) + "\n"
+        _validate_toml(candidate, config_path)
+        return candidate
+    if not replace:
+        raise FileExistsError(
+            f"[{MULTI_AGENT_SECTION}] differs from the Goal Ledger requirements in "
+            f"{config_path}; rerun with --replace"
+        )
+
+    next_header = re.search(r"(?m)^\[[^\n]+\][ \t]*$", config_text[match.end() :])
+    end = match.end() + next_header.start() if next_header else len(config_text)
+    body = config_text[match.end() : end]
+    for key, value in MULTI_AGENT_SETTINGS.items():
+        pattern = re.compile(rf"(?m)^[ \t]*{re.escape(key)}[ \t]*=.*$")
+        replacement = f"{key} = {_toml_scalar(value)}"
+        if pattern.search(body):
+            body = pattern.sub(replacement, body, count=1)
+        else:
+            body = body.rstrip() + "\n" + replacement + "\n"
+    candidate = config_text[: match.end()] + body + config_text[end:]
+    _validate_toml(candidate, config_path)
+    return candidate
+
+
+def _atomic_write(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        dir=path.parent, prefix=f".{path.name}.", delete=False
+    ) as stream:
+        temporary = Path(stream.name)
+        stream.write(data)
+    try:
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def agent_installation_problems(codex_home: Path) -> list[str]:
+    codex_home = codex_home.expanduser().resolve()
+    problems: list[str] = []
+    for name in AGENT_NAMES:
+        source = AGENT_SOURCE / f"{name}.toml"
+        target = codex_home / "agents" / f"{name}.toml"
+        if not target.is_file():
+            problems.append(f"missing managed agent profile: {target}")
+        elif target.read_bytes() != source.read_bytes():
+            problems.append(f"stale managed agent profile: {target}")
+
+    config_path = codex_home / "config.toml"
+    if not config_path.is_file():
+        problems.append(f"missing agent registration config: {config_path}")
+        return problems
+    config_text = config_path.read_text(encoding="utf-8")
+    try:
+        _validate_toml(config_text, config_path)
+    except ValueError as exc:
+        problems.append(str(exc))
+        return problems
+    matches = list(_managed_pattern().finditer(config_text))
+    if len(matches) != 1:
+        problems.append(f"missing exact Goal Ledger managed agent block: {config_path}")
+    elif matches[0].group(0).rstrip("\n") != managed_agent_block():
+        problems.append(f"stale Goal Ledger managed agent block: {config_path}")
+    problems.extend(multi_agent_config_problems(config_path))
+    return problems
+
+
+def validate_agent_install(codex_home: Path, *, replace: bool) -> None:
+    codex_home = codex_home.expanduser().resolve()
+    agents_dir = codex_home / "agents"
+    config_path = codex_home / "config.toml"
+    config_text = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    candidate = _config_with_agents(config_text, config_path, replace=replace)
+    _config_with_multi_agent(candidate, config_path, replace=replace)
+
+    for name in AGENT_NAMES:
+        source = AGENT_SOURCE / f"{name}.toml"
+        target = agents_dir / f"{name}.toml"
+        if not source.is_file():
+            raise FileNotFoundError(f"missing shipped agent profile: {source}")
+        try:
+            shipped = tomllib.loads(source.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as exc:
+            raise ValueError(f"invalid shipped agent profile {source}: {exc}") from exc
+        expected = PROFILE_BY_NAME[name]
+        if (
+            shipped.get("name") != name
+            or shipped.get("model") != expected.model
+            or shipped.get("model_reasoning_effort") != expected.effort
+        ):
+            raise ValueError(
+                f"shipped agent profile does not match the canonical manifest: {source}"
+            )
+        if target.exists() and (
+            not target.is_file() or target.read_bytes() != source.read_bytes()
+        ) and not replace:
+            raise FileExistsError(
+                f"{target} differs from the shipped profile; rerun with --replace"
+            )
+
+
+def install_agent_profiles(codex_home: Path, *, replace: bool) -> list[Path]:
+    codex_home = codex_home.expanduser().resolve()
+    validate_agent_install(codex_home, replace=replace)
+    agents_dir = codex_home / "agents"
+    config_path = codex_home / "config.toml"
+    config_text = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    candidate = _config_with_agents(config_text, config_path, replace=replace)
+    candidate = _config_with_multi_agent(candidate, config_path, replace=replace)
+
+    changed: list[Path] = []
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    for name in AGENT_NAMES:
+        source = AGENT_SOURCE / f"{name}.toml"
+        target = agents_dir / f"{name}.toml"
+        data = source.read_bytes()
+        if not target.is_file() or target.read_bytes() != data:
+            if target.exists():
+                backup = backup_path(target)
+                os.replace(target, backup)
+                changed.append(backup)
+            _atomic_write(target, data)
+            changed.append(target)
+
+    if config_text != candidate:
+        if config_path.exists():
+            backup = backup_path(config_path)
+            shutil.copy2(config_path, backup)
+            changed.append(backup)
+        _atomic_write(config_path, candidate.encode("utf-8"))
+        changed.append(config_path)
+    return changed
+
+
+def uninstall_agent_profiles(codex_home: Path, *, force: bool) -> list[Path]:
+    codex_home = codex_home.expanduser().resolve()
+    removed: list[Path] = []
+    for name in AGENT_NAMES:
+        source = AGENT_SOURCE / f"{name}.toml"
+        target = codex_home / "agents" / f"{name}.toml"
+        if not target.exists():
+            continue
+        if not target.is_file():
+            raise ValueError(f"managed agent path is not a regular file: {target}")
+        if target.read_bytes() != source.read_bytes() and not force:
+            raise FileExistsError(
+                f"refusing to remove customized agent profile {target}; "
+                "rerun with --force-agent-uninstall"
+            )
+        target.unlink()
+        removed.append(target)
+
+    config_path = codex_home / "config.toml"
+    if config_path.is_file():
+        config_text = config_path.read_text(encoding="utf-8")
+        candidate = _config_without_agents(config_text, config_path)
+        if candidate != config_text:
+            backup = backup_path(config_path)
+            shutil.copy2(config_path, backup)
+            _atomic_write(config_path, candidate.encode("utf-8"))
+            removed.append(config_path)
+    return removed
 
 
 def ignored(path: Path) -> bool:
@@ -165,6 +467,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Replace drifted files after preserving the existing directory as a backup.",
     )
+    parser.add_argument(
+        "--with-agents",
+        action="store_true",
+        help="Also install or check Goal Ledger-owned Codex agent profiles and registrations.",
+    )
+    parser.add_argument(
+        "--uninstall-agents",
+        action="store_true",
+        help="Remove only Goal Ledger-owned agent profiles and their managed config block.",
+    )
+    parser.add_argument(
+        "--force-agent-uninstall",
+        action="store_true",
+        help="Allow --uninstall-agents to remove customized Goal Ledger agent profile files.",
+    )
     return parser.parse_args(argv)
 
 
@@ -172,16 +489,43 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     destination = args.destination or default_destination()
     try:
+        if args.uninstall_agents:
+            if args.check or args.with_agents:
+                raise ValueError(
+                    "--uninstall-agents cannot be combined with --check or --with-agents"
+                )
+            removed = uninstall_agent_profiles(
+                default_codex_home(), force=args.force_agent_uninstall
+            )
+            for path in removed:
+                print(f"Removed or updated: {path}")
+            if not removed:
+                print("Goal Ledger agent profiles are not installed.")
+            return 0
+        if args.force_agent_uninstall:
+            raise ValueError("--force-agent-uninstall requires --uninstall-agents")
         if args.check:
             problems = installation_problems(PACKAGE_ROOT, destination.expanduser().resolve())
+            if args.with_agents:
+                problems.extend(agent_installation_problems(default_codex_home()))
             if problems:
                 for problem in problems:
                     print(f"error: {problem}", file=sys.stderr)
                 return 1
             print(f"Installation is current: {destination.expanduser().resolve()}")
+            if args.with_agents:
+                print("Goal Ledger agent profiles and registrations are current.")
             return 0
 
+        if args.with_agents:
+            # Fail on config/profile drift before replacing an otherwise installable skill.
+            validate_agent_install(default_codex_home(), replace=args.replace)
         installed, backup = install(PACKAGE_ROOT, destination, replace=args.replace)
+        agent_changes = (
+            install_agent_profiles(default_codex_home(), replace=args.replace)
+            if args.with_agents
+            else []
+        )
     except (FileExistsError, FileNotFoundError, OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -191,6 +535,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"Installed: {installed}")
         print(f"Preserved previous installation: {backup}")
+    for path in agent_changes:
+        print(f"Agent install change: {path}")
+    if args.with_agents:
+        print("Restart Codex or open a new task before checking session-visible agent roles.")
     return 0
 
 

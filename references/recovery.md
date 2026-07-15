@@ -31,6 +31,22 @@ Mark custody `lost` only when ownership or output cannot be recovered. Name the 
 
 Keep Markdown authoritative. Run `render_goal.py --check` to confirm drift, render from Markdown, then validate. Never repair generated HTML directly.
 
+### Preview URL is blocked or stale
+
+Never retry `file://`. Read `evidence/preview-server.json`, then run `serve_dashboard.py <goal-dir> --check`. If the health check fails, stop or reconcile the old process and restart the server. Prefer a connected Tailscale address; otherwise use localhost. If health passes but the dashboard is absent from the active task, use the same task's Browser skill to claim or create the tab, request visibility, verify the DOM, and retain it as a `deliverable`. If visibility cannot be confirmed, keep browser QA blocked rather than treating a hidden or external tab as delivered. A prior successful check proves only that timestamp, not that the endpoint is still live or visible.
+
+### Owned agent is configured but unavailable
+
+Configuration does not refresh an already-open task. Run `execution_profile.py preflight`; it must verify the owned profiles, registrations, and required `[features.multi_agent_v2]` values before routing. Open a new task after installation and check session visibility again. Record runtime confirmation only after the launched worker reports effective model and effort evidence. Never substitute a stale LazyCodex role silently.
+
+### Fable is selected but a conversational approval gate remains
+
+A recorded Fable choice of `yes` plus `fable_review_rounds` selects the configured sequence. Remove any gate that asks the user to type another consent sentence. Prepare the next exact allow-list with `run_fable_feedback.py --prepare-transmission`, then submit the matching digest-bound command through Codex's native external-transmission approval. Restore the goal from blocked when no other blocker remains, reconcile the current round, then advance. If the native approval denies the exact manifest, record that policy result and do not bypass it.
+
+### GPT Pro submission or capture was interrupted
+
+Read `evidence/pro-review/<stage>/round-NNN/state.json` and follow [pro-review.md](pro-review.md). `packet-ready` means probe the next ordered surface in `delivery-plan.json`; record the result instead of guessing availability. `ui-ready` may be submitted once through the recorded ready surface. `manual-handoff-ready` means present the checksum-bound owner instructions without calling the goal blocked solely for awaiting handoff. `submitted-waiting-response` means reopen and poll the existing thread; never send again. `response-received` means reconcile the preserved full response. A partial UI copy is not a response artifact: resume ordered capture from the same answer, verify its beginning and end, then record it once. Never fall back to prompt-only or a separate `$pro` skill.
+
 ### Ledger facts conflict
 
 Preserve the more conservative state and add an open gate describing the contradiction. Resolve it from repository, runtime, or external evidence before continuing.

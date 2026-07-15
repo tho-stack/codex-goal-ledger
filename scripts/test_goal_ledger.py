@@ -68,9 +68,19 @@ class GoalLedgerTests(unittest.TestCase):
         title: str = "Overnight Build",
         why: str = "This work must survive interruption.",
         outcome: str = "A verified durable result.",
+        fable_feedback: str = "no",
+        fable_rescue: str = "no",
+        fable_review_rounds: int = 1,
+        pro_review: str = "no",
+        pro_review_stage: str = "plan",
+        pro_review_gate: str = "required",
         external_review_prompt: str = "no",
         codex_review: str = "no",
         clean_session_handoff: str = "no",
+        planning_input_assessment: str = (
+            "- **Required before execution:** None.\n"
+            "- **Optional, improves result:** No additional information would materially improve this plan."
+        ),
         expected: int | None = 0,
     ) -> tuple[Path, Run]:
         root = project or self.project
@@ -86,12 +96,26 @@ class GoalLedgerTests(unittest.TestCase):
             why,
             "--outcome",
             outcome,
+            "--planning-input-assessment",
+            planning_input_assessment,
             "--planning-profile",
             "gpt-5.6-sol xhigh",
             "--implementation-profile",
-            "gpt-5.6-terra max",
+            "gpt-5.6-luna max",
             "--review-profile",
             "gpt-5.6-sol xhigh",
+            "--fable-feedback",
+            fable_feedback,
+            "--fable-review-rounds",
+            fable_review_rounds,
+            "--fable-rescue",
+            fable_rescue,
+            "--pro-review",
+            pro_review,
+            "--pro-review-stage",
+            pro_review_stage,
+            "--pro-review-gate",
+            pro_review_gate,
             "--external-review-prompt",
             external_review_prompt,
             "--codex-review",
@@ -143,6 +167,11 @@ class GoalLedgerTests(unittest.TestCase):
             1,
         )
         text = text.replace(
+            "| HTTP dashboard preview | pending | Serve HTTP, then present and verify a visible in-app Browser tab in this Codex task; never use `file://`. |",
+            "| HTTP dashboard preview | pass | A healthy HTTP URL and visible same-task in-app Browser deliverable were verified. |",
+            1,
+        )
+        text = text.replace(
             "| Contract review and first milestone | root execution | active |",
             "| Contract review and first milestone | root execution | complete |",
             1,
@@ -179,6 +208,22 @@ class GoalLedgerTests(unittest.TestCase):
         self.assertIn("{{TITLE}}", html_text)
         self.assertNotIn("2025-", html_text)
         self.assertIn(FIXED_DATE, html_text)
+        self.assertIn("ledger_version: 7", goal_text)
+        self.assertIn("pro_review_delivery: auto-ui", goal_text)
+        self.assertIn("fable_review_rounds: 1", goal_text)
+        self.assertIn("gpt-5.6-luna max", goal_text)
+        self.assertIn("Invoked profile", goal_text)
+        self.assertIn("Planning input assessment", goal_text)
+        self.assertIn("Claude Fable peer feedback | no", goal_text)
+        self.assertIn("Claude Fable scientific rescue | no", goal_text)
+        self.assertIn("GPT Pro review | no", goal_text)
+        self.assertIn('type="checkbox" disabled', html_text)
+        self.assertIn("Ask Fable · 1 round", html_text)
+        self.assertIn("Enable scientific rescue", html_text)
+        self.assertIn("Ask GPT Pro · plan · 1 round", html_text)
+        self.assertIn("Progress without a synthetic score", html_text)
+        self.assertIn("Review circuit", html_text)
+        self.assertIn("1 / 5 phases resolved", html_text)
 
         self.render(goal_dir, "--check")
         self.validate(goal_dir)
@@ -206,6 +251,30 @@ class GoalLedgerTests(unittest.TestCase):
                 self.assertIn(source_heading, goal_text)
                 self.assertIn(f"<title>{title} · Goal Ledger</title>", html)
                 self.assertIn(f'<h1 id="goal-title">{title}</h1>', html)
+
+    def test_planning_input_assessment_requires_defaults_for_optional_context(self) -> None:
+        valid_goal, _ = self.init(
+            slug="planning-input-valid",
+            planning_input_assessment=(
+                "- **Required before execution:** None.\n"
+                "- **Optional, improves result:**\n"
+                "  - **Information:** Target browser versions.\n"
+                "  - **What it improves:** Compatibility coverage.\n"
+                "  - **Default if omitted:** Test current Codex Preview and localhost."
+            ),
+        )
+        self.validate(valid_goal)
+
+        invalid_goal, _ = self.init(
+            slug="planning-input-invalid",
+            planning_input_assessment=(
+                "- **Required before execution:** None.\n"
+                "- **Optional, improves result:** Target browser versions improve compatibility."
+            ),
+        )
+        invalid = self.validate(invalid_goal, expected=None)
+        self.assertNotEqual(0, invalid.returncode)
+        self.assertIn("Default if omitted", invalid.stderr)
 
     def test_init_preserves_existing_artifacts_and_rejects_conflicting_partial_state(self) -> None:
         goal_dir, _ = self.init()
@@ -319,7 +388,8 @@ class GoalLedgerTests(unittest.TestCase):
         html = (goal_dir / "index.html").read_text(encoding="utf-8")
         self.assertIn('data-goal-status="complete"', html)
         self.assertIn('data-execution-health="inactive"', html)
-        self.assertIn("100%", html)
+        self.assertIn("5 / 5 phases resolved", html)
+        self.assertIn("0 open", html)
         self.assertIn('<span class="gate-count">0 open</span>', html)
         self.assertIn('<div class="gate-list"><p>No open gates.</p></div>', html)
 
@@ -519,6 +589,82 @@ class GoalLedgerTests(unittest.TestCase):
             invalid.stderr,
         )
 
+    def test_complete_goal_requires_selected_fable_evidence_and_verification(self) -> None:
+        goal_dir, _ = self.init(fable_feedback="yes")
+        initial_html = (goal_dir / "index.html").read_text(encoding="utf-8")
+        self.assertIn('type="checkbox" disabled checked', initial_html)
+        self.mark_complete(goal_dir)
+        self.render(goal_dir)
+        invalid = self.validate(goal_dir, expected=None)
+        self.assertNotEqual(0, invalid.returncode)
+        self.assertIn("missing selected Fable feedback", invalid.stderr)
+        self.assertIn(
+            "select Claude Fable peer feedback require a passing Verification row",
+            invalid.stderr,
+        )
+
+    def test_complete_goal_requires_native_pro_custody_and_verification(self) -> None:
+        goal_dir, _ = self.init(pro_review="yes")
+        self.mark_complete(goal_dir)
+        self.render(goal_dir)
+        invalid = self.validate(goal_dir, expected=None)
+        self.assertNotEqual(0, invalid.returncode)
+        self.assertIn("missing selected GPT Pro review: plan round 1", invalid.stderr)
+        self.assertIn(
+            "select GPT Pro review require a passing Verification row",
+            invalid.stderr,
+        )
+
+    def test_selected_pro_choice_rejects_a_conversational_approval_gate(self) -> None:
+        goal_dir, _ = self.init(pro_review="yes")
+        progress = goal_dir / "progress.md"
+        self.replace_once(
+            progress,
+            "Review the contract and start the first evidence-producing milestone.",
+            "To resume, reply that you approve sending the packet for GPT Pro review.",
+        )
+        self.render(goal_dir)
+        invalid = self.validate(goal_dir, expected=None)
+        self.assertNotEqual(0, invalid.returncode)
+        self.assertIn("remove the conversational GPT Pro approval gate", invalid.stderr)
+
+    def test_multiple_fable_rounds_are_recorded_and_validated(self) -> None:
+        goal_dir, _ = self.init(fable_feedback="yes", fable_review_rounds=3)
+        goal_text = (goal_dir / "goal.md").read_text(encoding="utf-8")
+        html_text = (goal_dir / "index.html").read_text(encoding="utf-8")
+        self.assertIn("fable_review_rounds: 3", goal_text)
+        self.assertIn("selects 3 sequential read-only Claude review rounds", goal_text)
+        self.assertIn("Ask Fable · 3 rounds", html_text)
+        self.validate(goal_dir)
+
+        self.replace_once(goal_dir / "goal.md", "fable_review_rounds: 3", "fable_review_rounds: 11")
+        invalid = self.validate(goal_dir, expected=None)
+        self.assertNotEqual(0, invalid.returncode)
+        self.assertIn("fable_review_rounds must be an integer from 1 to 10", invalid.stderr)
+
+    def test_selected_fable_choice_rejects_a_conversational_approval_gate(self) -> None:
+        goal_dir, _ = self.init(fable_feedback="yes")
+        goal_text = (goal_dir / "goal.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "A recorded Claude Fable choice of `yes` selects the configured read-only "
+            "planning-review rounds without another conversational consent sentence.",
+            goal_text,
+        )
+        progress = goal_dir / "progress.md"
+        self.replace_once(
+            progress,
+            "Review the contract and start the first evidence-producing milestone.",
+            "To resume, reply: I approve sending planning files to Claude Fable.",
+        )
+        self.render(goal_dir)
+        invalid = self.validate(goal_dir, expected=None)
+        self.assertNotEqual(0, invalid.returncode)
+        self.assertIn(
+            "remove the conversational Claude Fable approval gate; prepare the exact "
+            "manifest and submit native Codex approval automatically",
+            invalid.stderr,
+        )
+
     def test_selected_prompt_artifacts_are_deterministic_and_machine_independent(self) -> None:
         goal_dir, _ = self.init(
             external_review_prompt="yes",
@@ -574,6 +720,60 @@ class GoalLedgerTests(unittest.TestCase):
             "/applications/",
         ):
             self.assertNotIn(forbidden, lowered)
+
+    def test_skill_asks_closeout_questions_before_unattended_execution(self) -> None:
+        package_root = SCRIPT_DIR.parent
+        skill = (package_root / "SKILL.md").read_text(encoding="utf-8")
+        workflow = (package_root / "references" / "workflow.md").read_text(
+            encoding="utf-8"
+        )
+        closeout = (package_root / "references" / "closeout-kit.md").read_text(
+            encoding="utf-8"
+        )
+        default_prompt = (package_root / "agents" / "openai.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        for contract in (skill, workflow, closeout):
+            self.assertIn("checkbox", contract)
+            self.assertIn("unattended execution", contract)
+            self.assertIn("before", contract.casefold())
+
+        for contract in (skill, workflow, closeout):
+            lowered = contract.casefold()
+            self.assertIn("native", lowered)
+            self.assertIn("approval", lowered)
+            self.assertIn("manifest", lowered)
+
+        for contract in (skill, workflow):
+            self.assertIn("Optional, improves result", contract)
+            self.assertIn("Default if omitted", contract)
+            self.assertIn("must not block", contract)
+
+        self.assertLess(skill.index("request_user_input"), skill.index("## Operate"))
+        self.assertIn("first planning checkpoint", default_prompt)
+        self.assertIn("optional Claude Fable planning rounds", default_prompt)
+        self.assertIn("bounded scientific rescue", default_prompt)
+        self.assertIn("native GPT Pro prompt-plus-ZIP review", default_prompt)
+        self.assertIn("multi_agent_v2", default_prompt)
+        self.assertIn("extra context that could improve", default_prompt)
+
+    def test_skill_requires_visible_same_task_preview_delivery(self) -> None:
+        package_root = SCRIPT_DIR.parent
+        contracts = (
+            (package_root / "SKILL.md").read_text(encoding="utf-8"),
+            (package_root / "references" / "workflow.md").read_text(encoding="utf-8"),
+            (package_root / "references" / "closeout-kit.md").read_text(
+                encoding="utf-8"
+            ),
+        )
+        for contract in contracts:
+            lowered = contract.casefold()
+            self.assertIn("same codex task", lowered)
+            self.assertIn("visibility", lowered)
+            self.assertIn("deliverable", lowered)
+            self.assertIn("hidden", lowered)
+            self.assertIn("do not claim", lowered)
 
 
 if __name__ == "__main__":

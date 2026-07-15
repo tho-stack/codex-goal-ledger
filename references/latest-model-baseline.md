@@ -1,6 +1,6 @@
 # Latest model baseline
 
-Snapshot date: 2026-07-13. Verify drift-prone claims against current official OpenAI documentation or the live tool schema before exact routing.
+Snapshot date: 2026-07-14. Verify drift-prone claims against current official OpenAI documentation or the live tool schema before exact routing.
 
 ## Prompting baseline
 
@@ -8,6 +8,8 @@ The user-provided GPT-5.6 Sol guide favors outcome-first prompts, explicit compl
 
 ## Runtime baseline observed for this revision
 
-The available thread-creation surface exposed GPT-5.6 Sol and GPT-5.6 Terra with selectable reasoning levels including `xhigh` and `max`. The available subagent delegation surface did not expose a per-agent model or reasoning selector.
+The live delegation surface exposed explicit GPT-5.6 Luna selection and `max` effort, plus custom registered agent types. The user had removed LazyCodex, while an already-open task still advertised stale LazyCodex roles; filesystem leftovers and a stale task schema are not installation proof.
 
-These observations do not guarantee the same controls in another Codex surface. Record requested and effective execution profiles independently and never infer a successful switch from a desired assignment.
+Goal Ledger therefore ships an owned implementation fleet: Luna Max, Luna High, Terra Ultra, Sol Medium, Sol XHigh, and Sol Ultra, plus `goal-ledger-reviewer` at Sol XHigh. Installation state, visibility in a newly opened task, invocation, and the effective runtime profile remain separate evidence gates.
+
+These observations do not guarantee the same controls in another Codex surface. Record requested, invoked, and effective execution profiles independently and never infer a successful switch from configuration or a desired assignment.

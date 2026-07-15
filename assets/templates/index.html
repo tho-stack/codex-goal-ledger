@@ -69,9 +69,25 @@
         <span>Ledger sync</span>
         <strong>{{SYNC_LABEL}}</strong>
       </div>
+      <div class="preview-instrument" data-state="{{PREVIEW_STATE_ATTR}}">
+        <span>HTTP preview</span>
+        <strong>{{PREVIEW_LINK_HTML}}</strong>
+        <small>{{PREVIEW_TRANSPORT}} · {{PREVIEW_STATE_LABEL}}</small>
+        <small>{{PREVIEW_LAST_CHECK}}</small>
+      </div>
       <div class="instrument-coordinate" aria-label="Artifact coordinate">
         <span>{{GENERATED_DATE}}</span>
         <strong>{{DIGEST_SHORT}}</strong>
+      </div>
+    </section>
+
+    <section class="progress-band" aria-labelledby="progress-band-title">
+      <div class="progress-band-heading">
+        <p class="rail-title">Verified movement</p>
+        <h2 id="progress-band-title">Progress without a synthetic score</h2>
+      </div>
+      <div class="progress-tracks">
+        {{PROGRESS_TRACKS_HTML}}
       </div>
     </section>
 
@@ -81,21 +97,30 @@
         <ol>
           {{PHASE_RAIL_HTML}}
         </ol>
-        <div class="completion-mark">
-          <span class="completion-track" aria-hidden="true"><i style="width: {{COMPLETION_PERCENT}}%"></i></span>
-          <span>{{COMPLETION_PERCENT}}%</span>
-          <small>phases resolved</small>
-        </div>
       </nav>
 
       <div class="ledger-content">
+        <section class="review-circuit" id="review-circuit" aria-labelledby="review-circuit-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Plan, challenge, revise, verify</p>
+              <h2 id="review-circuit-title">Review circuit</h2>
+            </div>
+            <span class="section-number">01</span>
+          </div>
+          <p class="review-circuit-intro">Return arrows mark evidence-backed revision loops. Dashed routes have been selected but not completed.</p>
+          <div class="review-circuit-scroll" tabindex="0" aria-label="Scrollable review circuit">
+            {{REVIEW_GRAPH_HTML}}
+          </div>
+        </section>
+
         <section class="briefing" id="briefing" aria-labelledby="briefing-title">
           <div class="section-heading">
             <div>
               <p class="eyebrow">Current bearing</p>
               <h2 id="briefing-title">What matters now</h2>
             </div>
-            <span class="section-number">01</span>
+            <span class="section-number">02</span>
           </div>
           <div class="briefing-grid">
             <div>
@@ -140,7 +165,7 @@
               <p class="eyebrow">Evidence-bearing record</p>
               <h2 id="activity-title">Operational ledger</h2>
             </div>
-            <span class="section-number">02</span>
+            <span class="section-number">03</span>
           </div>
 
           <div class="ledger-tools js-only" role="search">
@@ -175,12 +200,12 @@
         <section class="session-kit" id="session-kit" aria-labelledby="session-kit-title">
           <div class="section-heading">
             <div>
-              <p class="eyebrow">Clean-context continuation</p>
-              <h2 id="session-kit-title">Session kit</h2>
+              <p class="eyebrow">Advisory review and continuation</p>
+              <h2 id="session-kit-title">Review &amp; session kit</h2>
             </div>
-            <span class="section-number">03</span>
+            <span class="section-number">04</span>
           </div>
-          <p class="session-kit-intro">Ready-to-copy prompts for an independent review or a clean-session handoff. Their content is generated from the same canonical ledger as this view.</p>
+          <p class="session-kit-intro">Optional planning feedback, closeout review, and clean-session handoff artifacts grounded in the same canonical ledger as this view.</p>
           <div class="session-kit-list">
             {{CLOSEOUT_KIT_HTML}}
           </div>
@@ -192,7 +217,7 @@
               <p class="eyebrow">Canonical Markdown</p>
               <h2 id="source-title">Contract and operating record</h2>
             </div>
-            <span class="section-number">04</span>
+            <span class="section-number">05</span>
           </div>
           <details open>
             <summary>Goal contract <span>goal.md</span></summary>

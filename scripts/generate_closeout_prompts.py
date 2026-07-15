@@ -27,12 +27,30 @@ TEMPLATE_ROOT = PACKAGE_ROOT / "assets" / "templates"
 CLOSEOUT_SECTION = "Closeout options"
 CLOSEOUT_HEADERS = ("Option", "Choice", "Artifact or action")
 EXTERNAL_REVIEW_OPTION = "External LLM review prompt"
+FABLE_FEEDBACK_OPTION = "Claude Fable peer feedback"
+FABLE_RESCUE_OPTION = "Claude Fable scientific rescue"
+PRO_REVIEW_OPTION = "GPT Pro review"
 CODEX_REVIEW_OPTION = "Additional Codex review"
 CLEAN_HANDOFF_OPTION = "Clean-session handoff prompt"
-CLOSEOUT_OPTION_LABELS = (
+LEGACY_CLOSEOUT_OPTION_LABELS = (
     EXTERNAL_REVIEW_OPTION,
     CODEX_REVIEW_OPTION,
     CLEAN_HANDOFF_OPTION,
+)
+CLOSEOUT_OPTION_LABELS = (
+    FABLE_FEEDBACK_OPTION,
+    *LEGACY_CLOSEOUT_OPTION_LABELS,
+)
+V5_CLOSEOUT_OPTION_LABELS = (
+    FABLE_FEEDBACK_OPTION,
+    FABLE_RESCUE_OPTION,
+    *LEGACY_CLOSEOUT_OPTION_LABELS,
+)
+V6_CLOSEOUT_OPTION_LABELS = (
+    FABLE_FEEDBACK_OPTION,
+    FABLE_RESCUE_OPTION,
+    PRO_REVIEW_OPTION,
+    *LEGACY_CLOSEOUT_OPTION_LABELS,
 )
 VALID_CLOSEOUT_CHOICES = frozenset({"ask", "yes", "no"})
 
@@ -50,6 +68,22 @@ class PromptSyncResult:
     changed: tuple[Path, ...]
     removed: tuple[Path, ...]
     problems: tuple[str, ...]
+
+
+def closeout_option_labels(goal: Document) -> tuple[str, ...]:
+    """Return the exact option rows for the ledger schema version."""
+    version = goal.metadata.get("ledger_version", "").strip()
+    if version == "2":
+        return LEGACY_CLOSEOUT_OPTION_LABELS
+    if version in {"3", "4"}:
+        return CLOSEOUT_OPTION_LABELS
+    if version == "5":
+        return V5_CLOSEOUT_OPTION_LABELS
+    if version in {"6", "7"}:
+        return V6_CLOSEOUT_OPTION_LABELS
+    raise LedgerError(
+        f"{goal.path}: unsupported ledger_version {version!r}; expected 2, 3, 4, 5, 6, or 7"
+    )
 
 
 def parse_closeout_options(goal: Document) -> dict[str, str]:
@@ -72,15 +106,16 @@ def parse_closeout_options(goal: Document) -> dict[str, str]:
                 f"{len(CLOSEOUT_HEADERS)} cells; found {len(row)}"
             )
 
+    expected_labels = closeout_option_labels(goal)
     labels = tuple(row[0].strip() for row in rows)
-    if labels != CLOSEOUT_OPTION_LABELS:
+    if labels != expected_labels:
         raise LedgerError(
             f"{goal.path}: {CLOSEOUT_SECTION} rows must be exactly, in order: "
-            + "; ".join(CLOSEOUT_OPTION_LABELS)
+            + "; ".join(expected_labels)
         )
 
     choices: dict[str, str] = {}
-    for label, row in zip(CLOSEOUT_OPTION_LABELS, rows, strict=True):
+    for label, row in zip(expected_labels, rows, strict=True):
         raw_choice = row[1].strip()
         choice = raw_choice.casefold()
         if raw_choice != choice or choice not in VALID_CLOSEOUT_CHOICES:

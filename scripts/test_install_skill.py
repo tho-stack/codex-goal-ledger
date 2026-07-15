@@ -10,6 +10,8 @@ import sys
 import tempfile
 import unittest
 
+from agent_profiles import AGENT_NAMES
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 INSTALLER = SCRIPT_DIR / "install_skill.py"
@@ -98,6 +100,103 @@ class InstallerTests(unittest.TestCase):
             (backups[0] / "SKILL.md").read_text(encoding="utf-8"),
         )
         self.run_installer("--destination", destination, "--check")
+
+    def test_owned_agents_install_check_and_uninstall_without_touching_other_agents(self) -> None:
+        codex_home = self.root / "codex-home-agents"
+        agents = codex_home / "agents"
+        agents.mkdir(parents=True)
+        unrelated = agents / "my-existing-agent.toml"
+        unrelated.write_text('name = "mine"\n', encoding="utf-8")
+        config = codex_home / "config.toml"
+        original = 'model = "gpt-5.6-sol"\n\n[agents]\nmax_threads = 8\n'
+        config.write_text(original, encoding="utf-8")
+
+        installed = self.run_installer("--with-agents", codex_home=codex_home)
+        self.assertIn("Restart Codex", installed.stdout)
+        for name in AGENT_NAMES:
+            profile = agents / f"{name}.toml"
+            self.assertTrue(profile.is_file())
+            self.assertIn(f"[agents.{name}]", config.read_text(encoding="utf-8"))
+        self.assertEqual('name = "mine"\n', unrelated.read_text(encoding="utf-8"))
+        installed_config = config.read_text(encoding="utf-8")
+        self.assertIn(original.rstrip(), installed_config)
+        self.assertIn("[features.multi_agent_v2]", installed_config)
+        self.assertIn("hide_spawn_agent_metadata = false", installed_config)
+        self.assertIn("max_concurrent_threads_per_session = 8", installed_config)
+        self.assertIn('tool_namespace = "agents"', installed_config)
+
+        checked = self.run_installer(
+            "--check", "--with-agents", codex_home=codex_home
+        )
+        self.assertIn("agent profiles and registrations are current", checked.stdout)
+
+        removed = self.run_installer("--uninstall-agents", codex_home=codex_home)
+        self.assertIn("Removed or updated", removed.stdout)
+        self.assertEqual('name = "mine"\n', unrelated.read_text(encoding="utf-8"))
+        text = config.read_text(encoding="utf-8")
+        self.assertNotIn("goal-ledger-implementer", text)
+        self.assertNotIn("goal-ledger-reviewer", text)
+        self.assertIn('[agents]\nmax_threads = 8', text)
+        self.assertIn("[features.multi_agent_v2]", text)
+
+    def test_multi_agent_v2_drift_requires_replace_and_preflight_sees_it(self) -> None:
+        codex_home = self.root / "codex-home-multi-agent"
+        codex_home.mkdir(parents=True)
+        config = codex_home / "config.toml"
+        config.write_text(
+            "[features.multi_agent_v2]\n"
+            "hide_spawn_agent_metadata = true\n"
+            "max_concurrent_threads_per_session = 2\n"
+            'tool_namespace = "legacy"\n',
+            encoding="utf-8",
+        )
+        refused = self.run_installer("--with-agents", codex_home=codex_home, expected=1)
+        self.assertIn("multi_agent_v2", refused.stderr)
+        replaced = self.run_installer(
+            "--with-agents", "--replace", codex_home=codex_home
+        )
+        self.assertIn("Restart Codex", replaced.stdout)
+        text = config.read_text(encoding="utf-8")
+        self.assertIn("hide_spawn_agent_metadata = false", text)
+        self.assertIn("max_concurrent_threads_per_session = 8", text)
+        self.assertIn('tool_namespace = "agents"', text)
+        self.run_installer("--check", "--with-agents", codex_home=codex_home)
+
+    def test_owned_agent_drift_requires_explicit_replace_or_forced_uninstall(self) -> None:
+        codex_home = self.root / "codex-home-agent-drift"
+        self.run_installer("--with-agents", codex_home=codex_home)
+        profile = codex_home / "agents" / "goal-ledger-implementer.toml"
+        profile.write_text("customized\n", encoding="utf-8")
+
+        refused = self.run_installer(
+            "--with-agents", codex_home=codex_home, expected=1
+        )
+        self.assertIn("differs from the shipped profile", refused.stderr)
+        refused_uninstall = self.run_installer(
+            "--uninstall-agents", codex_home=codex_home, expected=1
+        )
+        self.assertIn("refusing to remove customized agent profile", refused_uninstall.stderr)
+
+        forced = self.run_installer(
+            "--uninstall-agents",
+            "--force-agent-uninstall",
+            codex_home=codex_home,
+        )
+        self.assertIn("Removed or updated", forced.stdout)
+        self.assertFalse(profile.exists())
+
+    def test_unbalanced_managed_config_markers_are_never_rewritten(self) -> None:
+        codex_home = self.root / "codex-home-markers"
+        codex_home.mkdir(parents=True)
+        config = codex_home / "config.toml"
+        original = 'model = "gpt-5.6-sol"\n# BEGIN codex-goal-ledger managed agents\n'
+        config.write_text(original, encoding="utf-8")
+        refused = self.run_installer(
+            "--with-agents", codex_home=codex_home, expected=1
+        )
+        self.assertIn("unbalanced Goal Ledger managed markers", refused.stderr)
+        self.assertEqual(original, config.read_text(encoding="utf-8"))
+        self.assertFalse((codex_home / "skills" / "codex-goal-ledger").exists())
 
 
 if __name__ == "__main__":

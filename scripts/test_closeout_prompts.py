@@ -13,6 +13,7 @@ from generate_closeout_prompts import (
     CLEAN_HANDOFF_OPTION,
     CODEX_REVIEW_OPTION,
     EXTERNAL_REVIEW_OPTION,
+    FABLE_FEEDBACK_OPTION,
     build_closeout_prompt_artifacts,
     load_closeout_options,
 )
@@ -21,9 +22,17 @@ from generate_closeout_prompts import (
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 
-def goal_markdown(*, external: str, codex: str, handoff: str) -> str:
+def goal_markdown(
+    *, external: str, codex: str, handoff: str, fable: str | None = None
+) -> str:
+    version = "3" if fable is not None else "2"
+    fable_row = (
+        f"| Claude Fable peer feedback | {fable} | Run Fable feedback. |\n"
+        if fable is not None
+        else ""
+    )
     return f"""---
-ledger_version: 2
+ledger_version: {version}
 title: Use *literal* C#_2
 slug: closeout-test
 status: active
@@ -40,7 +49,7 @@ allowed_skipped_verifications: none
 
 | Option | Choice | Artifact or action |
 | --- | --- | --- |
-| External LLM review prompt | {external} | Generate the review prompt. |
+{fable_row}| External LLM review prompt | {external} | Generate the review prompt. |
 | Additional Codex review | {codex} | Run the Codex review. |
 | Clean-session handoff prompt | {handoff} | Generate the handoff prompt. |
 """
@@ -60,9 +69,13 @@ class CloseoutPromptTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def write_goal(self, *, external: str, codex: str, handoff: str) -> None:
+    def write_goal(
+        self, *, external: str, codex: str, handoff: str, fable: str | None = None
+    ) -> None:
         (self.goal_dir / "goal.md").write_text(
-            goal_markdown(external=external, codex=codex, handoff=handoff),
+            goal_markdown(
+                external=external, codex=codex, handoff=handoff, fable=fable
+            ),
             encoding="utf-8",
             newline="\n",
         )
@@ -148,6 +161,12 @@ class CloseoutPromptTests(unittest.TestCase):
         invalid_row = self.run_tool(str(self.goal_dir), expected=2)
         self.assertIn("rows must be exactly", invalid_row.stderr)
         self.assertFalse((self.goal_dir / "review-prompt.md").exists())
+
+    def test_schema_v3_includes_independent_fable_choice(self) -> None:
+        self.write_goal(external="no", codex="no", handoff="no", fable="yes")
+        _, choices = load_closeout_options(self.goal_dir)
+        self.assertEqual("yes", choices[FABLE_FEEDBACK_OPTION])
+        self.assertEqual(4, len(choices))
 
 
 if __name__ == "__main__":

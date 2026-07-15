@@ -33,7 +33,24 @@ from ledger_common import (
     strip_markdown,
 )
 from render_goal import ASSET_ROOT, SHARED_ASSETS, build_dashboard
-from generate_closeout_prompts import closeout_prompt_problems
+from generate_closeout_prompts import (
+    CODEX_REVIEW_OPTION,
+    FABLE_FEEDBACK_OPTION,
+    FABLE_RESCUE_OPTION,
+    PRO_REVIEW_OPTION,
+    closeout_option_labels,
+    closeout_prompt_problems,
+)
+from run_fable_feedback import fable_feedback_problems, fable_review_rounds
+from run_fable_rescue import fable_rescue_problems
+from run_pro_review import (
+    pro_plan_gate_problem,
+    pro_review_delivery,
+    pro_review_gate,
+    pro_review_problems,
+    pro_review_rounds,
+    pro_review_stage,
+)
 
 
 GOAL_METADATA = (
@@ -59,6 +76,19 @@ GOAL_SECTIONS = (
     "Authorization",
     "Completion contract",
 )
+V4_GOAL_SECTIONS = ("Planning input assessment",)
+V5_GOAL_METADATA = (
+    "fable_rescue_max_incidents",
+    "fable_rescue_rounds_per_incident",
+    "fable_rescue_effort",
+    "fable_rescue_lineage",
+)
+V6_GOAL_METADATA = V5_GOAL_METADATA + (
+    "pro_review_rounds",
+    "pro_review_stage",
+    "pro_review_delivery",
+    "pro_review_gate",
+)
 PROGRESS_SECTIONS = (
     "At a glance",
     "Phase tracker",
@@ -72,17 +102,49 @@ PROGRESS_SECTIONS = (
     "Next action",
 )
 TABLE_SCHEMAS = {
-    "Execution profile": ("Layer", "Requested profile", "Effective profile", "Rule"),
     "Closeout options": ("Option", "Choice", "Artifact or action"),
     "Phase tracker": ("Phase", "State", "Evidence", "Next gate"),
     "Decision log": ("Decision", "Why", "Status"),
     "Verification": ("Check", "Result", "Evidence"),
     "Custody": ("Work item", "Owner", "State", "Recovery action"),
 }
-CLOSEOUT_OPTION_LABELS = (
-    "External LLM review prompt",
-    "Additional Codex review",
-    "Clean-session handoff prompt",
+EXECUTION_PROFILE_SCHEMAS = {
+    "2": ("Layer", "Requested profile", "Effective profile", "Rule"),
+    "3": ("Layer", "Requested profile", "Effective profile", "Rule"),
+    "4": (
+        "Layer",
+        "Requested profile",
+        "Invoked profile",
+        "Effective profile",
+        "Evidence",
+    ),
+    "5": (
+        "Layer",
+        "Requested profile",
+        "Invoked profile",
+        "Effective profile",
+        "Evidence",
+    ),
+    "6": (
+        "Layer",
+        "Requested profile",
+        "Invoked profile",
+        "Effective profile",
+        "Evidence",
+    ),
+    "7": (
+        "Layer",
+        "Requested profile",
+        "Invoked profile",
+        "Effective profile",
+        "Evidence",
+    ),
+}
+V4_EXECUTION_LAYERS = (
+    "Planning and architecture",
+    "Implementation",
+    "Claude Fable planning peer",
+    "Final adversarial review",
 )
 CLOSEOUT_CHOICES = {"ask", "yes", "no"}
 
@@ -261,7 +323,11 @@ def _table(
     problems: Problems,
 ) -> list[list[str]]:
     headers, rows = parse_table(get_section(document, section))
-    expected = TABLE_SCHEMAS[section]
+    expected = (
+        EXECUTION_PROFILE_SCHEMAS.get(document.metadata.get("ledger_version", ""), ())
+        if section == "Execution profile"
+        else TABLE_SCHEMAS[section]
+    )
     normalized = tuple(normalize_key(header) for header in headers)
     expected_normalized = tuple(normalize_key(header) for header in expected)
     if normalized != expected_normalized:
@@ -324,25 +390,59 @@ def _validate_markdown(goal_dir: Path, problems: Problems) -> tuple[Document, Do
         problems.add(str(exc))
         return None
 
-    _metadata(goal, GOAL_METADATA, problems)
+    _metadata(
+        goal,
+        GOAL_METADATA
+        + (
+            V6_GOAL_METADATA
+            if goal.metadata.get("ledger_version") in {"6", "7"}
+            else V5_GOAL_METADATA
+            if goal.metadata.get("ledger_version") == "5"
+            else ()
+        ),
+        problems,
+    )
     _metadata(progress, PROGRESS_METADATA, problems)
     _fenced_code(goal, problems)
     _fenced_code(progress, problems)
-    _sections(goal, GOAL_SECTIONS, problems)
+    goal_version = goal.metadata.get("ledger_version", "").strip()
+    progress_version = progress.metadata.get("ledger_version", "").strip()
+    _sections(
+        goal,
+        GOAL_SECTIONS + (V4_GOAL_SECTIONS if goal_version in {"4", "5", "6", "7"} else ()),
+        problems,
+    )
     _sections(progress, PROGRESS_SECTIONS, problems)
 
     title = goal.metadata.get("title", "").strip()
     _h1(goal, title, problems)
     _h1(progress, f"Progress: {title}", problems)
 
-    goal_version = goal.metadata.get("ledger_version", "").strip()
-    progress_version = progress.metadata.get("ledger_version", "").strip()
-    if goal_version != "2":
-        problems.add(f"{goal.path}: ledger_version must be 2, found {goal_version!r}")
-    if progress_version != "2":
-        problems.add(f"{progress.path}: ledger_version must be 2, found {progress_version!r}")
+    if goal_version not in {"2", "3", "4", "5", "6", "7"}:
+        problems.add(
+            f"{goal.path}: ledger_version must be 2, 3, 4, 5, 6, or 7, found {goal_version!r}"
+        )
+    if progress_version not in {"2", "3", "4", "5", "6", "7"}:
+        problems.add(
+            f"{progress.path}: ledger_version must be 2, 3, 4, 5, 6, or 7, found {progress_version!r}"
+        )
     if goal_version != progress_version:
         problems.add("goal.md and progress.md ledger_version values must agree")
+    try:
+        fable_review_rounds(goal)
+    except LedgerError as exc:
+        problems.add(f"{goal.path}: {exc}")
+    if goal_version in {"6", "7"}:
+        for parser in (
+            pro_review_rounds,
+            pro_review_stage,
+            pro_review_delivery,
+            pro_review_gate,
+        ):
+            try:
+                parser(goal)
+            except LedgerError as exc:
+                problems.add(f"{goal.path}: {exc}")
 
     slug = goal.metadata.get("slug", "").strip()
     goal_slug = progress.metadata.get("goal_slug", "").strip()
@@ -371,6 +471,25 @@ def _validate_markdown(goal_dir: Path, problems: Problems) -> tuple[Document, Do
     if not success_criteria:
         problems.add(f"{goal.path}: Success criteria must contain at least one list item")
 
+    if goal_version in {"4", "5", "6", "7"}:
+        assessment = normalize_key(strip_markdown(get_section(goal, "Planning input assessment")))
+        if "required before execution" not in assessment:
+            problems.add(
+                f"{goal.path}: Planning input assessment must state Required before execution"
+            )
+        if "optional improves result" not in assessment:
+            problems.add(
+                f"{goal.path}: Planning input assessment must state Optional, improves result"
+            )
+        if (
+            "no additional information would materially improve this plan" not in assessment
+            and "default if omitted" not in assessment
+        ):
+            problems.add(
+                f"{goal.path}: optional planning inputs must state Default if omitted, or say "
+                "that no additional information would materially improve the plan"
+            )
+
     execution_rows = _table(goal, "Execution profile", problems)
     closeout_rows = _table(goal, "Closeout options", problems)
     phase_rows = _table(progress, "Phase tracker", problems)
@@ -387,7 +506,30 @@ def _validate_markdown(goal_dir: Path, problems: Problems) -> tuple[Document, Do
     ):
         _required_cells(document, section, rows, problems)
 
+    if goal_version in {"4", "5", "6", "7"}:
+        actual_layers = tuple(strip_markdown(row[0]).strip() for row in execution_rows if row)
+        if actual_layers != V4_EXECUTION_LAYERS:
+            problems.add(
+                f"{goal.path}: ledger v4 Execution profile rows must be exactly, in order: "
+                + "; ".join(V4_EXECUTION_LAYERS)
+            )
+        for index, row in enumerate(execution_rows, 1):
+            if len(row) != 5:
+                continue
+            invoked = normalize_key(strip_markdown(row[2]))
+            effective = normalize_key(strip_markdown(row[3]))
+            if invoked == "not invoked" and effective != "unconfirmed":
+                problems.add(
+                    f"{goal.path}: Execution profile row {index} cannot claim an effective "
+                    "profile before invocation"
+                )
+
     closeout_choices: dict[str, str] = {}
+    try:
+        expected_closeout_labels = closeout_option_labels(goal)
+    except LedgerError as exc:
+        problems.add(str(exc))
+        expected_closeout_labels = ()
     actual_closeout_labels: list[str] = []
     for index, row in enumerate(closeout_rows, 1):
         if len(row) < 2:
@@ -401,11 +543,69 @@ def _validate_markdown(goal_dir: Path, problems: Problems) -> tuple[Document, Do
                 f"{choice!r}; expected ask, yes, or no"
             )
         closeout_choices[label] = choice
-    if tuple(actual_closeout_labels) != CLOSEOUT_OPTION_LABELS:
+    if tuple(actual_closeout_labels) != expected_closeout_labels:
         problems.add(
             f"{goal.path}: Closeout options must contain these exact ordered rows: "
-            + "; ".join(CLOSEOUT_OPTION_LABELS)
+            + "; ".join(expected_closeout_labels)
         )
+
+    if (
+        closeout_choices.get(FABLE_FEEDBACK_OPTION) == "yes"
+        or closeout_choices.get(FABLE_RESCUE_OPTION) == "yes"
+    ):
+        current_state = normalize_key(
+            strip_markdown(
+                "\n".join(
+                    get_section(progress, section)
+                    for section in ("At a glance", "Current focus", "Open gates", "Next action")
+                )
+            )
+        )
+        duplicate_approval = (
+            "approve sending" in current_state
+            or re.search(
+                r"(?:await|waiting|wait|need|require|request|reply|resume).{0,160}"
+                r"(?:approve|approval).{0,160}(?:claude|fable)",
+                current_state,
+            )
+            or re.search(
+                r"(?:claude|fable).{0,160}(?:approve|approval).{0,160}"
+                r"(?:await|waiting|wait|need|require|request|reply|resume)",
+                current_state,
+            )
+        )
+        if duplicate_approval:
+            problems.add(
+                f"{progress.path}: remove the conversational Claude Fable approval gate; "
+                "prepare the exact manifest and submit native Codex approval automatically"
+            )
+
+    if closeout_choices.get(PRO_REVIEW_OPTION) == "yes":
+        current_state = normalize_key(
+            strip_markdown(
+                "\n".join(
+                    get_section(progress, section)
+                    for section in ("At a glance", "Current focus", "Open gates", "Next action")
+                )
+            )
+        )
+        duplicate_pro_approval = (
+            re.search(
+                r"(?:await|waiting|wait|need|require|request|reply|resume).{0,160}"
+                r"(?:approve|approval).{0,160}(?:gpt pro|chatgpt pro|pro review)",
+                current_state,
+            )
+            or re.search(
+                r"(?:gpt pro|chatgpt pro|pro review).{0,160}(?:approve|approval).{0,160}"
+                r"(?:await|waiting|wait|need|require|request|reply|resume)",
+                current_state,
+            )
+        )
+        if duplicate_pro_approval:
+            problems.add(
+                f"{progress.path}: remove the conversational GPT Pro approval gate; use the "
+                "recorded selection and exact generated packet under the action-time UI policy"
+            )
 
     phase_states = [
         _cell_state(progress, "Phase tracker", index, row[1], PHASE_STATES, problems)
@@ -420,6 +620,12 @@ def _validate_markdown(goal_dir: Path, problems: Problems) -> tuple[Document, Do
         for index, row in enumerate(verification_rows, 1)
         if len(row) > 1
     ]
+    for index, row in enumerate(verification_rows, 1):
+        if len(row) > 2 and "fable-rescue" in normalize_key(strip_markdown(row[2])):
+            problems.add(
+                f"{progress.path}: Verification row {index} cites a Fable rescue artifact; "
+                "rescue is advisory and may not be completion evidence"
+            )
     custody_states = [
         _cell_state(progress, "Custody", index, row[2], CUSTODY_STATES, problems)
         for index, row in enumerate(custody_rows, 1)
@@ -474,22 +680,36 @@ def _validate_markdown(goal_dir: Path, problems: Problems) -> tuple[Document, Do
 
     if goal_status == "complete":
         unresolved_closeout = [
-            label for label in CLOSEOUT_OPTION_LABELS if closeout_choices.get(label) == "ask"
+            label
+            for label in expected_closeout_labels
+            if closeout_choices.get(label) == "ask"
         ]
         if unresolved_closeout:
             problems.add(
                 "complete goals must resolve every Closeout options choice to yes or no; "
                 "still ask: " + "; ".join(unresolved_closeout)
             )
-        if closeout_choices.get("Additional Codex review") == "yes":
-            codex_review_results = {
-                strip_markdown(row[0]).strip(): normalize_state(strip_markdown(row[1]))
-                for row in verification_rows
-                if len(row) > 1
-            }
-            if codex_review_results.get("Additional Codex review") != "pass":
+        verification_results = {
+            strip_markdown(row[0]).strip(): normalize_state(strip_markdown(row[1]))
+            for row in verification_rows
+            if len(row) > 1
+        }
+        if closeout_choices.get(CODEX_REVIEW_OPTION) == "yes":
+            if verification_results.get(CODEX_REVIEW_OPTION) != "pass":
                 problems.add(
                     "complete goals that select Additional Codex review require a passing "
+                    "Verification row with that exact label"
+                )
+        if closeout_choices.get(FABLE_FEEDBACK_OPTION) == "yes":
+            if verification_results.get(FABLE_FEEDBACK_OPTION) != "pass":
+                problems.add(
+                    "complete goals that select Claude Fable peer feedback require a passing "
+                    "Verification row with that exact label"
+                )
+        if closeout_choices.get(PRO_REVIEW_OPTION) == "yes":
+            if verification_results.get(PRO_REVIEW_OPTION) != "pass":
+                problems.add(
+                    "complete goals that select GPT Pro review require a passing "
                     "Verification row with that exact label"
                 )
         if health != "inactive":
@@ -538,6 +758,8 @@ def _validate_dashboard(
     except (OSError, UnicodeDecodeError) as exc:
         problems.add(f"{index_path}: must be readable UTF-8 HTML: {exc}")
         return
+    if re.search(r'''(?i)href\s*=\s*["']file://''', text):
+        problems.add(f"{index_path}: generated dashboard must not link to a file:// URL")
 
     # With valid canonical documents, exact deterministic comparison below proves
     # that every shipped template field was resolved. Only use a raw-token check
@@ -697,6 +919,37 @@ def _validate_closeout_prompts(
         if not complete and problem.startswith("missing selected closeout prompt:"):
             continue
         problems.add(f"{goal_dir}: {problem}")
+    try:
+        feedback_problems = fable_feedback_problems(goal_dir)
+    except (LedgerError, OSError) as exc:
+        problems.add(f"cannot validate Fable feedback: {exc}")
+        return
+    for problem in feedback_problems:
+        if not complete and problem.startswith("missing selected Fable feedback"):
+            continue
+        problems.add(f"{goal_dir}: {problem}")
+    try:
+        rescue_problems = fable_rescue_problems(goal_dir, require_closed=complete)
+    except (LedgerError, OSError) as exc:
+        problems.add(f"cannot validate Fable scientific rescue: {exc}")
+        return
+    for problem in rescue_problems:
+        problems.add(f"{goal_dir}: {problem}")
+    try:
+        pro_problems = pro_review_problems(goal_dir, require_closed=complete)
+    except (LedgerError, OSError) as exc:
+        problems.add(f"cannot validate GPT Pro review: {exc}")
+        return
+    for problem in pro_problems:
+        problems.add(f"{goal_dir}: {problem}")
+
+    try:
+        plan_gate = pro_plan_gate_problem(goal_dir, goal, documents[1])
+    except (LedgerError, OSError) as exc:
+        problems.add(f"cannot validate GPT Pro plan gate: {exc}")
+    else:
+        if plan_gate:
+            problems.add(f"{goal_dir}: {plan_gate}")
 
 
 def validate(goal_dir: Path) -> list[str]:

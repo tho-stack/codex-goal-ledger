@@ -31,9 +31,17 @@ from generate_closeout_prompts import (
     CLEAN_HANDOFF_OPTION,
     CODEX_REVIEW_OPTION,
     EXTERNAL_REVIEW_OPTION,
+    FABLE_FEEDBACK_OPTION,
+    FABLE_RESCUE_OPTION,
+    PRO_REVIEW_OPTION,
     build_closeout_prompt_artifacts,
     parse_closeout_options,
 )
+from run_fable_feedback import fable_artifacts, fable_feedback_problems, fable_review_rounds
+from run_fable_rescue import fable_rescue_problems
+from run_pro_review import pro_review_problems, pro_review_rounds, pro_review_stage
+from review_graph import build_review_lanes, progress_tracks
+from preview_common import load_preview_state
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
@@ -61,6 +69,35 @@ def _section_html(document: Document, section: str, fallback: str) -> str:
 
 def _source_html(document: Document) -> str:
     return markdown_to_html(without_first_h1(document.body), heading_shift=1)
+
+
+def _preview_values(goal_dir: Path) -> dict[str, str]:
+    state = load_preview_state(goal_dir)
+    if state is None:
+        return {
+            "PREVIEW_STATE_ATTR": "not-started",
+            "PREVIEW_STATE_LABEL": "Not started",
+            "PREVIEW_TRANSPORT": "HTTP server required",
+            "PREVIEW_LAST_CHECK": "No health check recorded",
+            "PREVIEW_LINK_HTML": '<span class="preview-unavailable">Not started</span>',
+        }
+    label = state_label(state.state)
+    link = (
+        f'<a href="{escape(state.url, quote=True)}" rel="noopener">'
+        f"{escape(state.display_host)}:{state.port}</a>"
+    )
+    last_check = (
+        f"Checked {state.last_health_check}"
+        if state.last_health_check
+        else "No successful health check recorded"
+    )
+    return {
+        "PREVIEW_STATE_ATTR": escape(state.state, quote=True),
+        "PREVIEW_STATE_LABEL": escape(label),
+        "PREVIEW_TRANSPORT": escape(state.transport.title()),
+        "PREVIEW_LAST_CHECK": escape(last_check),
+        "PREVIEW_LINK_HTML": link,
+    }
 
 
 def _asset_destination(goal_dir: Path) -> Path:
@@ -115,15 +152,12 @@ def _phase_target(name: str) -> str:
     }.get(normalize_key(name), "activity")
 
 
-def _phase_rail(rows: list[list[str]]) -> tuple[str, int]:
+def _phase_rail(rows: list[list[str]]) -> str:
     rendered: list[str] = []
-    resolved = 0
     for row in rows:
         phase = row[0].strip() if row else "Unnamed phase"
         raw_state = row[1].strip() if len(row) > 1 else "unknown"
         state = normalize_state(strip_markdown(raw_state))
-        if state in {"complete", "skipped"}:
-            resolved += 1
         current = ' aria-current="step"' if state == "active" else ""
         rendered.append(
             f'<li data-state="{escape(state, quote=True)}">'
@@ -132,9 +166,64 @@ def _phase_rail(rows: list[list[str]]) -> tuple[str, int]:
             f"<span>{escape(state_label(state))}</span>"
             "</a></li>"
         )
-    percentage = round((resolved / len(rows)) * 100) if rows else 0
-    percentage = max(0, min(100, percentage))
-    return "\n".join(rendered), percentage
+    return "\n".join(rendered)
+
+
+def _review_graph_html(lanes: tuple[object, ...]) -> str:
+    rendered: list[str] = []
+    for lane in lanes:
+        sequence: list[str] = []
+        for index, node in enumerate(lane.nodes):
+            content = (
+                f'<span class="review-node-title">{escape(node.label)}</span>'
+                f'<span class="review-node-detail">{escape(node.detail)}</span>'
+            )
+            if node.href:
+                node_html = (
+                    f'<a href="{escape(node.href, quote=True)}" '
+                    f'data-state="{escape(node.state, quote=True)}">{content}</a>'
+                )
+            else:
+                node_html = (
+                    f'<span data-state="{escape(node.state, quote=True)}">{content}</span>'
+                )
+            sequence.append(
+                f'<li class="review-node" data-state="{escape(node.state, quote=True)}">'
+                f"{node_html}</li>"
+            )
+            if index < len(lane.edges):
+                edge = lane.edges[index]
+                arrow = "↩" if edge.direction == "return" else "→"
+                sequence.append(
+                    f'<li class="review-edge" data-state="{escape(edge.state, quote=True)}" '
+                    f'data-direction="{escape(edge.direction, quote=True)}">'
+                    f'<span aria-hidden="true">{arrow}</span><small>{escape(edge.label)}</small></li>'
+                )
+        rendered.append(
+            f'<section class="review-lane" aria-labelledby="review-lane-{escape(lane.key, quote=True)}">'
+            f'<h3 id="review-lane-{escape(lane.key, quote=True)}">{escape(lane.label)}</h3>'
+            f'<ol>{"".join(sequence)}</ol></section>'
+        )
+    return "\n".join(rendered)
+
+
+def _progress_tracks_html(tracks: tuple[object, ...]) -> str:
+    rendered: list[str] = []
+    for track in tracks:
+        total = track.total if track.total > 0 else 1
+        segments = []
+        for index in range(total):
+            state = "complete" if index < track.resolved else "pending"
+            segments.append(f'<i data-state="{state}"></i>')
+        rendered.append(
+            f'<div class="progress-track" data-track="{escape(track.key, quote=True)}" '
+            f'data-kind="{escape(track.kind, quote=True)}">'
+            '<div class="progress-track-heading">'
+            f'<strong>{escape(track.label)}</strong><span>{escape(track.summary)}</span></div>'
+            f'<span class="progress-segments" aria-hidden="true">{"".join(segments)}</span>'
+            "</div>"
+        )
+    return "\n".join(rendered)
 
 
 def _activity_records(
@@ -195,18 +284,47 @@ def _closeout_kit_html(
     goal: Document,
     verification_rows: list[list[str]],
 ) -> str:
-    """Render the three planning choices and any current generated prompt text."""
+    """Render planning choices and any current generated review artifacts."""
     choices = parse_closeout_options(goal)
+    fable_round_count = fable_review_rounds(goal)
+    fable_round_artifacts = fable_artifacts(goal)
     expected = build_closeout_prompt_artifacts(goal_dir, goal=goal, choices=choices)
     verification = {
         strip_markdown(row[0]).strip(): normalize_state(strip_markdown(row[1]))
         for row in verification_rows
         if len(row) > 1
     }
-    specs = (
+    all_specs = (
+        (
+            FABLE_FEEDBACK_OPTION,
+            "Claude Fable",
+            "Planning critique and opportunities",
+            "Read-only plan review with grounded feature ideas and science or research hypotheses.",
+            (
+                fable_round_artifacts[0].as_posix()
+                if fable_round_count == 1
+                else f"{fable_round_count} round artifacts"
+            ),
+            "fable-feedback",
+        ),
+        (
+            FABLE_RESCUE_OPTION,
+            "Claude Fable",
+            "Scientific rescue",
+            "A bounded, falsifiable diagnosis and highest-information experiment for a qualified scientific impasse.",
+            None,
+            None,
+        ),
+        (
+            PRO_REVIEW_OPTION,
+            "GPT Pro",
+            "Native high-context review",
+            "A GPT-5.6-shaped prompt plus scoped ZIP, visible Pro submission, full raw response, and typed reconciliation without another skill.",
+            "evidence/pro-review/",
+            None,
+        ),
         (
             EXTERNAL_REVIEW_OPTION,
-            "K01",
             "Claude / other LLM",
             "Independent completion review",
             "A findings-first, read-only review brief grounded in the canonical ledger and repository evidence.",
@@ -215,7 +333,6 @@ def _closeout_kit_html(
         ),
         (
             CODEX_REVIEW_OPTION,
-            "K02",
             "Codex closeout",
             "Additional Codex review",
             "An optional advisory code-review pass whose findings must be verified before any fix is accepted.",
@@ -224,7 +341,6 @@ def _closeout_kit_html(
         ),
         (
             CLEAN_HANDOFF_OPTION,
-            "K03",
             "Fresh GPT context",
             "Clean-session handoff",
             "A compact restart brief that points a new session back to repository truth before it acts.",
@@ -232,11 +348,41 @@ def _closeout_kit_html(
             "closeout-handoff-prompt",
         ),
     )
+    specs = tuple(spec for spec in all_specs if spec[0] in choices)
     rows: list[str] = []
-    for option, index, eyebrow, title, description, artifact_name, target_id in specs:
+    for sequence, spec in enumerate(specs, 1):
+        option, eyebrow, title, description, artifact_name, target_id = spec
+        index = f"K{sequence:02d}"
         choice = choices[option]
         details = ""
         action = ""
+        if option == FABLE_FEEDBACK_OPTION:
+            checked = " checked" if choice == "yes" else ""
+            action = (
+                '<label class="kit-choice" title="Recorded in goal.md">'
+                f'<input type="checkbox" disabled{checked} '
+                'aria-label="Claude Fable peer feedback selection">'
+                f'<span>Ask Fable · {fable_round_count} round'
+                f'{"" if fable_round_count == 1 else "s"}</span></label>'
+            )
+        elif option == FABLE_RESCUE_OPTION:
+            checked = " checked" if choice == "yes" else ""
+            action = (
+                '<label class="kit-choice" title="Recorded in goal.md">'
+                f'<input type="checkbox" disabled{checked} '
+                'aria-label="Claude Fable scientific rescue selection">'
+                '<span>Enable scientific rescue</span></label>'
+            )
+        elif option == PRO_REVIEW_OPTION:
+            checked = " checked" if choice == "yes" else ""
+            action = (
+                '<label class="kit-choice" title="Recorded in goal.md">'
+                f'<input type="checkbox" disabled{checked} '
+                'aria-label="GPT Pro review selection">'
+                f'<span>Ask GPT Pro · {pro_review_stage(goal)} · '
+                f'{pro_review_rounds(goal)} round'
+                f'{"" if pro_review_rounds(goal) == 1 else "s"}</span></label>'
+            )
         if choice == "ask":
             state = "pending"
             state_label_text = "Choice needed"
@@ -247,6 +393,64 @@ def _closeout_kit_html(
             passed = verification.get(CODEX_REVIEW_OPTION) == "pass"
             state = "complete" if passed else "pending"
             state_label_text = "Complete" if passed else "Selected"
+        elif option == FABLE_FEEDBACK_OPTION:
+            ready = (
+                not fable_feedback_problems(goal_dir, choices=choices)
+                and verification.get(FABLE_FEEDBACK_OPTION) == "pass"
+            )
+            state = "complete" if ready else "pending"
+            state_label_text = "Complete" if ready else "Selected"
+            available_artifacts = [
+                path for path in fable_round_artifacts if (goal_dir / path).is_file()
+            ]
+            if available_artifacts and target_id is not None:
+                feedback = "\n\n---\n\n".join(
+                    (goal_dir / path).read_text(encoding="utf-8")
+                    for path in available_artifacts
+                )
+                details = (
+                    f'<details><summary>Preview {len(available_artifacts)} of '
+                    f'{fable_round_count} Fable rounds</summary>'
+                    f'<pre id="{escape(target_id, quote=True)}" data-prompt-content>'
+                    f"{escape(feedback)}</pre></details>"
+                )
+                action += (
+                    '<button class="quiet-button js-only" type="button" '
+                    f'data-copy-prompt data-copy-target="{escape(target_id, quote=True)}" '
+                    'aria-label="Copy Claude Fable feedback">'
+                    '<span aria-hidden="true">⧉</span><span data-copy-label>Copy feedback</span>'
+                    "</button>"
+                )
+        elif option == FABLE_RESCUE_OPTION:
+            problems = fable_rescue_problems(goal_dir)
+            incidents_root = goal_dir / "evidence" / "fable-rescue"
+            incident_count = (
+                len(list(incidents_root.glob("rescue-[0-9][0-9][0-9]/response.json")))
+                if incidents_root.is_dir()
+                else 0
+            )
+            state = "blocked" if problems else ("complete" if incident_count else "pending")
+            state_label_text = (
+                "Needs attention" if problems else (f"{incident_count} incident(s)" if incident_count else "Armed")
+            )
+            if problems:
+                details = (
+                    '<details><summary>Rescue validation</summary><pre>'
+                    + escape("\n".join(problems))
+                    + "</pre></details>"
+                )
+        elif option == PRO_REVIEW_OPTION:
+            problems = pro_review_problems(goal_dir, require_closed=True)
+            passed = verification.get(PRO_REVIEW_OPTION) == "pass"
+            ready = not problems and passed
+            state = "complete" if ready else "pending"
+            state_label_text = "Complete" if ready else "Selected"
+            if problems and (goal_dir / "evidence" / "pro-review").exists():
+                details = (
+                    '<details><summary>GPT Pro custody status</summary><pre>'
+                    + escape("\n".join(problems))
+                    + "</pre></details>"
+                )
         else:
             artifact_path = goal_dir / str(artifact_name)
             expected_bytes = expected.get(artifact_path)
@@ -264,7 +468,7 @@ def _closeout_kit_html(
                     f'<pre id="{escape(target_id, quote=True)}" data-prompt-content>'
                     f"{escape(prompt)}</pre></details>"
                 )
-                action = (
+                action += (
                     '<button class="quiet-button js-only" type="button" '
                     f'data-copy-prompt data-copy-target="{escape(target_id, quote=True)}" '
                     f'aria-label="Copy {escape(str(artifact_name), quote=True)}">'
@@ -336,7 +540,7 @@ def build_dashboard(goal_dir: Path, *, assume_synced_assets: bool = False) -> by
     closeout_rows = _table_rows(goal, "Closeout options")
     verification_rows = _table_rows(progress, "Verification")
     custody_rows = _table_rows(progress, "Custody")
-    phase_html, completion = _phase_rail(phase_rows)
+    phase_html = _phase_rail(phase_rows)
     records = _activity_records(
         phase_rows, decision_rows, closeout_rows, verification_rows, custody_rows
     )
@@ -349,11 +553,13 @@ def build_dashboard(goal_dir: Path, *, assume_synced_assets: bool = False) -> by
         if gates
         else "<p>No open gates.</p>"
     )
+    review_lanes = build_review_lanes(goal_dir, goal, verification_rows)
+    tracks = progress_tracks(
+        goal, phase_rows, verification_rows, len(gates), review_lanes
+    )
 
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
-    rendered = replace_template(
-        template,
-        {
+    values = {
             "DIGEST": digest,
             "TITLE_ATTR": escape(title, quote=True),
             "TITLE": escape(title),
@@ -373,7 +579,8 @@ def build_dashboard(goal_dir: Path, *, assume_synced_assets: bool = False) -> by
             "GENERATED_DATE": escape(updated),
             "DIGEST_SHORT": digest[:12],
             "PHASE_RAIL_HTML": phase_html,
-            "COMPLETION_PERCENT": str(completion),
+            "PROGRESS_TRACKS_HTML": _progress_tracks_html(tracks),
+            "REVIEW_GRAPH_HTML": _review_graph_html(review_lanes),
             "CURRENT_FOCUS_HTML": _section_html(
                 progress, "Current focus", "No current focus recorded."
             ),
@@ -394,8 +601,9 @@ def build_dashboard(goal_dir: Path, *, assume_synced_assets: bool = False) -> by
             "GOAL_SECTIONS_HTML": _source_html(goal),
             "PROGRESS_SECTIONS_HTML": _source_html(progress),
             "GENERATED_AT": escape(updated),
-        },
-    )
+        }
+    values.update(_preview_values(goal_dir))
+    rendered = replace_template(template, values)
     return (rendered.rstrip() + "\n").encode("utf-8")
 
 

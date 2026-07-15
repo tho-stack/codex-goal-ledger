@@ -1,177 +1,140 @@
+# Codex Goal Ledger
+
+Codex Goal Ledger turns a long-running task into a durable, repository-local run record. The canonical plan and progress stay in Markdown; the generated dashboard makes execution state, evidence, review loops, recovery, and remaining gates easy to inspect.
+
+It is designed for work that can outlive one chat session: difficult implementations, research programs, scientific investigations, and high-context reviews where “done” needs evidence.
+
 <p align="center">
-  <img src="assets/icon-large.svg" alt="Codex Goal Ledger" width="112">
+  <img src="docs/images/dashboard-full.png" alt="Goal Ledger dashboard showing the active objective, operational instruments, and separate run, evidence, review, and gate progress tracks" width="100%">
 </p>
 
-<h1 align="center">Codex Goal Ledger</h1>
+<p align="center"><sub>Real Goal Ledger rendering from a neutral synthetic fixture. No user, client, or project data is included.</sub></p>
+
+<details>
+  <summary>Responsive mobile view</summary>
+  <p align="center">
+    <img src="docs/images/dashboard-mobile.png" alt="Responsive mobile view of the Goal Ledger objective and latest verified truth" width="390">
+  </p>
+</details>
+
+## What it adds
+
+- Durable `goal.md` and `progress.md` files with generated HTML, never HTML as the source of truth.
+- Separate progress tracks for run phases, evidence, selected reviews, and open gates—without a synthetic overall percentage.
+- Optional multi-round Claude Fable planning review with critique, feature proposals, science proposals, and explicit reconciliation.
+- Native GPT Pro review packets: a GPT-5.6-oriented review prompt, scoped context ZIP, checksummed manifest, complete raw response, and typed local reconciliation.
+- Platform-aware GPT Pro delivery routing: Safari, Chrome, the ChatGPT desktop app, then a checksum-bound manual handoff.
+- Bounded Claude Fable scientific rescue when a hard scientific question stalls implementation.
+- Owned Codex implementation and review agents, including Luna, Sol, and Terra effort presets and mixed swarms.
+- HTTP preview over Tailscale when available, with a localhost fallback; no `file://` dependency.
+- Recovery capsules and clean-session handoffs that state the last verified truth and exact next action.
+
+## Review and rescue circuit
+
+The dashboard derives this circuit from preserved evidence. A blocked or revise verdict creates a visible return path; a selected but unfinished review stays dashed.
 
 <p align="center">
-  Durable, inspectable state for long-running Codex work.
+  <img src="docs/images/dashboard-review-circuit.png" alt="Review circuit showing Fable and GPT Pro revision rounds, a bounded Fable scientific rescue path, and the independent closeout review path" width="100%">
 </p>
 
-Codex Goal Ledger is a reusable Codex skill for work that must survive long runs,
-context compaction, interruptions, delegated agents, and clean-session handoffs. It
-keeps the execution contract and current truth in repository-local Markdown, then
-renders an interactive HTML dashboard for fast human review.
+The three review roles are intentionally different:
 
-The central rule is simple: **the ledger records what was actually verified, not what
-the current session merely expects to be true.**
+- **Fable planning peer** challenges the plan before Build. It may propose missing information, features, and scientific hypotheses. Each round is read-only, manifest-bound, preserved, and reconciled before the next round.
+- **GPT Pro** is an independent high-context gate for the plan, the implementation, or both. A `BLOCKED` result returns to revision; `SIGNED OFF` advances only after Codex records a typed, locally verified reconciliation.
+- **Codex closeout reviewer** runs after Verify. Accepted findings return to Build or Verify, then the closeout evidence is refreshed before Close.
 
-## What it provides
+**Fable rescue is not another routine review.** It is available only after Build reaches a qualified scientific impasse and operational causes have been ruled out. The rescue packet freezes the question, evidence, competing explanations, prediction, and experiment boundary. Fable remains advisory; Codex must classify every proposal, run the authorized prediction-locked experiment, record the outcome, and return the verified learning to Build. Rescue advice can never serve as completion evidence by itself.
 
-- A durable `goal.md` contract covering outcome, scope, authorization, success
-  criteria, and closeout choices.
-- A live `progress.md` ledger for phases, execution health, custody, evidence, gates,
-  recovery state, and the smallest safe next action.
-- A generated, responsive `index.html` dashboard with system/light/dark themes,
-  search and state filters, keyboard shortcuts, phase navigation, and copy actions.
-- Explicit separation between goal state, execution health, delegated-work custody,
-  and verification evidence.
-- Recovery rules that preserve completed work and reconcile real repository state
-  before execution resumes.
-- Deterministic, opt-in prompts for an independent LLM review and a new clean GPT
-  session handoff.
-- An optional additional `$codex-review` closeout gate.
-- A portable installer with drift detection and backup-before-replace behavior.
+```mermaid
+flowchart LR
+    Plan --> FablePlan[Fable planning rounds]
+    FablePlan -->|REVISE| PlanFix[Revise plan]
+    PlanFix --> FablePlan
+    FablePlan -->|READY| ProPlan[GPT Pro plan review]
+    ProPlan -->|BLOCKED| ContractFix[Revise contract]
+    ContractFix --> ProPlan
+    ProPlan -->|SIGNED OFF| Build
 
-The dashboard has no third-party runtime dependency, print/PDF workflow, external
-browser launcher, or hardcoded application path. Codex opens or refreshes it through
-the in-app preview when that capability is available.
+    Build -->|qualified scientific impasse| Rescue[Fable scientific rescue]
+    Rescue --> Reconcile[Codex reconciliation]
+    Reconcile --> Experiment[Prediction-locked experiment]
+    Experiment --> Outcome[Recorded outcome]
+    Outcome --> Build
+
+    Build --> Verify
+    Verify --> ProImplementation[Optional GPT Pro implementation review]
+    ProImplementation --> CodexReview[Optional Codex closeout review]
+    CodexReview -->|accepted fixes| Build
+    CodexReview --> Close
+```
+
+The incident budget, approved repository scope, exact transmitted manifest, and experiment authority are fixed in the goal contract. A new scientific question or expanded file scope requires a new authorized incident rather than silently extending the old one.
 
 ## Install
 
-Requirements:
-
-- Codex with local skills support
-- Python 3.10 or newer
-- Git, if installing from a clone
-
-Clone the repository and run the installer:
+From this repository:
 
 ```bash
-git clone https://github.com/tho-stack/codex-goal-ledger.git
-cd codex-goal-ledger
-python3 scripts/install_skill.py
-python3 scripts/install_skill.py --check
+python3 scripts/install_skill.py --with-agents
+python3 scripts/install_skill.py --check --with-agents
 ```
 
-The default destination is:
+The installer copies the skill and its owned agents into the Codex skill directory. It also checks the multi-agent settings the workflow depends on:
 
-```text
-$CODEX_HOME/skills/codex-goal-ledger
+```toml
+[features.multi_agent_v2]
+hide_spawn_agent_metadata = false
+max_concurrent_threads_per_session = 8
+tool_namespace = "agents"
 ```
 
-When `CODEX_HOME` is unset, the installer uses
-`~/.codex/skills/codex-goal-ledger`. To choose another location:
+If configuration is missing or incompatible, the skill reports the exact fix rather than silently claiming that an agent profile was used.
 
-```bash
-python3 scripts/install_skill.py \
-  --destination /path/to/skills/codex-goal-ledger
-```
+## Use
 
-The installer copies only the actual skill package: `SKILL.md`, `agents/`, `assets/`,
-`references/`, and `scripts/`. Repository documentation such as this README is not
-placed in the installed skill.
+Invoke `$codex-goal-ledger` and describe the outcome. The skill asks planning choices up front—using native chat controls when available—so review work does not sit idle until the end of planning.
 
-### Update an installation
-
-```bash
-git pull --ff-only
-python3 scripts/install_skill.py --replace
-python3 scripts/install_skill.py --check
-```
-
-`--replace` never silently destroys a drifted installation. It first preserves the
-existing directory as a timestamped sibling backup.
-
-## Use it in Codex
-
-Invoke the skill explicitly when a task needs durable execution state:
-
-```text
-Use $codex-goal-ledger to plan and run this overnight implementation. Keep the
-goal contract, evidence, recovery state, and interactive dashboard current.
-```
-
-It also supports recovery and audit requests:
-
-```text
-Use $codex-goal-ledger to recover this interrupted task from the repository and
-resume from the smallest safe next action.
-```
-
-```text
-Use $codex-goal-ledger to audit whether this goal is genuinely complete and report
-every unsupported or contradictory claim.
-```
-
-During planning, the skill asks one bundled question with recommendations for three
-closeout options:
-
-1. Generate a review prompt for Claude or another independent LLM.
-2. Run an additional `$codex-review` at the end.
-3. Generate a handoff prompt for a new clean GPT session.
-
-Each choice remains explicit—`yes`, `no`, or temporarily `ask`. A goal cannot close
-while any closeout choice is still unresolved.
-
-## What it creates
-
-Each goal lives inside the project being worked on:
-
-```text
-docs/
-├── assets/
-│   ├── goal-ledger.css
-│   └── goal-ledger.js
-└── goals/
-    └── <goal-slug>/
-        ├── goal.md
-        ├── progress.md
-        ├── index.html
-        ├── review-prompt.md       # optional
-        ├── handoff-prompt.md      # optional
-        └── evidence/
-```
-
-`goal.md` and `progress.md` are canonical. `index.html` and the optional prompts are
-generated artifacts; edit the Markdown sources and regenerate rather than patching
-generated output by hand.
-
-## Manual commands
-
-Codex normally orchestrates these commands. They are also available for direct use,
-automation, and debugging:
+For direct initialization, this is the minimal shape:
 
 ```bash
 python3 scripts/init_goal.py \
   --project-root /path/to/project \
-  --slug overnight-build \
-  --title "Overnight build" \
-  --why "Why this work matters" \
-  --outcome "The observable finished state" \
-  --external-review-prompt yes \
-  --codex-review yes \
-  --clean-session-handoff yes
-
-python3 scripts/render_goal.py \
-  /path/to/project/docs/goals/overnight-build
-
-python3 scripts/generate_closeout_prompts.py \
-  /path/to/project/docs/goals/overnight-build
-
-python3 scripts/validate_goal.py \
-  /path/to/project/docs/goals/overnight-build
+  --slug example-goal \
+  --title "Example Goal" \
+  --why "The work needs a durable execution contract." \
+  --outcome "The result is verified and recoverable." \
+  --fable-feedback yes \
+  --fable-rescue yes \
+  --pro-review yes \
+  --codex-review yes
 ```
 
-Use `render_goal.py --check` and `generate_closeout_prompts.py --check` in CI or
-read-only validation lanes. Use `render_goal.py --sync-assets` after upgrading the
-shipped dashboard CSS or JavaScript.
+Then render and serve the dashboard over HTTP:
 
-## Repository layout
+```bash
+python3 scripts/render_goal.py docs/goals/example-goal --sync-assets
+python3 scripts/serve_dashboard.py docs/goals/example-goal --host-mode auto
+```
 
-```text
-SKILL.md       Authoritative instructions loaded by Codex
-agents/        Codex UI metadata
-assets/        Dashboard assets, icons, and ledger templates
-references/    Detailed workflow, recovery, state, and closeout contracts
-scripts/       Initializer, renderer, validator, installer, and tests
+## Custody model
+
+External reviewers receive only the files listed in the packet manifest. Every packet is hashed, every response is preserved in full, and every recommendation gets an explicit local disposition. Requested, invoked, and effective model identities are recorded separately; an unconfirmed runtime identity stays unconfirmed.
+
+The dashboard is a view over those artifacts. It does not infer success from prose, elapsed time, a reviewer’s confidence, or an agent’s claim.
+
+## Validate
+
+```bash
+python3 scripts/test_goal_ledger.py
+python3 scripts/test_execution_profile.py
+python3 scripts/test_fable_feedback.py
+python3 scripts/test_fable_transport.py
+python3 scripts/test_fable_rescue.py
+python3 scripts/test_pro_review.py
+python3 scripts/test_review_graph.py
+python3 scripts/test_preview_server.py
+python3 scripts/test_closeout_prompts.py
+python3 scripts/test_install_skill.py
+```
+
+The README screenshots are generated from a synthetic goal named **Aurora Research Program**. They contain no real goal, repository, user, or client information.
