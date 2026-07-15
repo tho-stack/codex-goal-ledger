@@ -182,6 +182,11 @@ class ReviewGraphTests(unittest.TestCase):
         self.assertIn("overflow-x: visible", css)
         self.assertIn('.review-lane[data-layout="stacked"]', css)
         self.assertIn("grid-template-columns: clamp(6rem, 9vw, 8rem) minmax(0, 1fr)", css)
+        self.assertIn("flex: 0 1 4.25rem", css)
+        edge_rule = css.split(".review-edge > span {", 1)[1].split("}", 1)[0]
+        self.assertIn("font-size: 1.35rem", edge_rule)
+        self.assertIn("text-align: center", edge_rule)
+        self.assertNotIn("text-align: end", edge_rule)
         self.assertNotIn("min-width: max-content", css)
         self.assertIn("@media (prefers-reduced-motion: reduce)", css)
 
