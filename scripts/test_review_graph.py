@@ -195,6 +195,9 @@ class ReviewGraphTests(unittest.TestCase):
         self.assertIn("@media (prefers-reduced-motion: reduce)", css)
         self.assertIn("active-node-breathe", css)
         self.assertIn("active-node-sweep", css)
+        opening_rule = css.split(".opening {", 1)[1].split("}", 1)[0]
+        self.assertIn("align-items: start", opening_rule)
+        self.assertNotIn("align-items: end", opening_rule)
 
 
 if __name__ == "__main__":

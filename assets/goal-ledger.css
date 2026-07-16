@@ -301,7 +301,7 @@ main {
   display: grid;
   grid-template-columns: 5rem minmax(0, 1fr) minmax(17rem, 25rem);
   gap: clamp(1.25rem, 3vw, 4rem);
-  align-items: end;
+  align-items: start;
 }
 
 .opening-index {
