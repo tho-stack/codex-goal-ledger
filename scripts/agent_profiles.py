@@ -65,6 +65,13 @@ IMPLEMENTER_PROFILES = (
 )
 REVIEWER_PROFILES = (
     AgentProfile(
+        "goal-ledger-gate-reviewer",
+        "gpt-5.6-luna",
+        "high",
+        "Luna High gate reviewer",
+        "fast independent read-only operational gate review",
+    ),
+    AgentProfile(
         "goal-ledger-reviewer",
         "gpt-5.6-sol",
         "xhigh",

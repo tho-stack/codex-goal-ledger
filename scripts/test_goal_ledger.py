@@ -411,6 +411,44 @@ class GoalLedgerTests(unittest.TestCase):
         self.assertIn("Critical blocker remains", html)
         self.assertNotIn('<span class="gate-count">0 open</span>', html)
 
+    def test_wrapped_open_gate_items_render_once_with_complete_text(self) -> None:
+        goal_dir, _ = self.init()
+        progress = goal_dir / "progress.md"
+        self.replace_once(
+            progress,
+            "- Confirm the success criteria are observable and sufficient.\n"
+            "- Confirm the effective execution profile before claiming model routing.",
+            "- Preserve the exact reviewed manifest while the independent reviewer\n"
+            "  records its verdict outside those bytes.\n"
+            "- Keep unrelated repository changes outside this goal's custody and\n"
+            "  retain their original ownership.",
+        )
+        self.render(goal_dir)
+        self.validate(goal_dir)
+
+        html = (goal_dir / "index.html").read_text(encoding="utf-8")
+        self.assertIn('<span class="gate-count">2 open</span>', html)
+        self.assertIn(
+            "<li>Preserve the exact reviewed manifest while the independent reviewer "
+            "records its verdict outside those bytes.</li>",
+            html,
+        )
+        self.assertIn(
+            "<li>Keep unrelated repository changes outside this goal's custody and "
+            "retain their original ownership.</li>",
+            html,
+        )
+        self.assertNotIn("<li>records its verdict", html)
+
+        self.replace_once(
+            goal_dir / "index.html",
+            '<span class="gate-count">2 open</span>',
+            '<span class="gate-count">3 open</span>',
+        )
+        invalid = self.validate(goal_dir, expected=None)
+        self.assertNotEqual(0, invalid.returncode)
+        self.assertIn("open-gate rendering count mismatch", invalid.stderr)
+
     def test_skips_require_machine_readable_contract_permission(self) -> None:
         goal_dir, _ = self.init()
         self.mark_complete(goal_dir)
@@ -835,6 +873,23 @@ class GoalLedgerTests(unittest.TestCase):
             self.assertIn("deliverable", lowered)
             self.assertIn("hidden", lowered)
             self.assertIn("do not claim", lowered)
+
+    def test_skill_routes_frequent_operational_gates_to_fast_reviewer(self) -> None:
+        package_root = SCRIPT_DIR.parent
+        skill = (package_root / "SKILL.md").read_text(encoding="utf-8")
+        profile = (
+            package_root
+            / "assets"
+            / "agent-profiles"
+            / "goal-ledger-gate-reviewer.toml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("goal-ledger-gate-reviewer", skill)
+        self.assertIn("GO`, `BLOCKED`, or `NEEDS_DEEP_REVIEW", skill)
+        self.assertIn("read-only default subagent", skill)
+        self.assertIn("model `gpt-5.6-luna` and effort `high`", skill)
+        self.assertIn('model = "gpt-5.6-luna"', profile)
+        self.assertIn('model_reasoning_effort = "high"', profile)
+        self.assertIn("Remain read-only", profile)
 
 
 if __name__ == "__main__":

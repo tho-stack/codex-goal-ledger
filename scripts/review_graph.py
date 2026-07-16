@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 from typing import Iterable, Mapping
@@ -26,6 +26,7 @@ class ReviewNode:
     detail: str
     state: str
     href: str | None = None
+    current: bool = False
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,14 @@ def _safe_json(path: Path) -> Mapping[str, object] | None:
 def _verification_map(rows: Iterable[list[str]]) -> dict[str, str]:
     return {
         strip_markdown(row[0]).strip(): normalize_state(strip_markdown(row[1]))
+        for row in rows
+        if len(row) > 1
+    }
+
+
+def _phase_map(rows: Iterable[list[str]]) -> dict[str, str]:
+    return {
+        normalize_state(strip_markdown(row[0])): normalize_state(strip_markdown(row[1]))
         for row in rows
         if len(row) > 1
     }
@@ -161,9 +170,57 @@ def _sequence_edges(nodes: list[ReviewNode]) -> tuple[ReviewEdge, ...]:
     return tuple(_edge_for_state(node.state) for node in nodes[:-1])
 
 
+def _mark_current(nodes: list[ReviewNode], key: str | None) -> list[ReviewNode]:
+    return [replace(node, current=node.key == key) for node in nodes]
+
+
+def _fable_reconciled(goal_dir: Path, node: ReviewNode) -> bool:
+    try:
+        number = int(node.key.rsplit("-", 1)[-1])
+    except ValueError:
+        return False
+    return (goal_dir / "evidence" / f"fable-round-{number}-reconciliation.md").is_file()
+
+
+def _planning_current_key(
+    goal_dir: Path,
+    *,
+    fable_selected: bool,
+    fable_nodes: list[ReviewNode],
+    fable_verification: str,
+    pro_nodes: list[ReviewNode],
+    define_phase: str,
+    build_phase: str,
+) -> str | None:
+    if fable_selected and not _resolved(fable_verification):
+        unreconciled = [
+            node
+            for node in fable_nodes
+            if node.state != "pending" and not _fable_reconciled(goal_dir, node)
+        ]
+        if unreconciled:
+            return unreconciled[-1].key
+        pending = next((node for node in fable_nodes if node.state == "pending"), None)
+        if pending is not None:
+            return pending.key
+
+    active_pro = next((node for node in reversed(pro_nodes) if node.state == "active"), None)
+    if active_pro is not None:
+        return active_pro.key
+    pending_pro = next((node for node in pro_nodes if node.state == "pending"), None)
+    if pending_pro is not None:
+        return pending_pro.key
+    if define_phase == "active":
+        return "define-gate"
+    if build_phase == "active":
+        return "build"
+    return None
+
+
 def build_review_lanes(
     goal_dir: Path,
     goal: Document,
+    phase_rows: Iterable[list[str]],
     verification_rows: Iterable[list[str]],
 ) -> tuple[ReviewLane, ...]:
     choices = parse_closeout_options(goal)
@@ -171,13 +228,38 @@ def build_review_lanes(
     pro_selected = choices.get(PRO_REVIEW_OPTION) == "yes"
     codex_selected = choices.get(CODEX_REVIEW_OPTION) == "yes"
     verification = _verification_map(verification_rows)
+    phases = _phase_map(phase_rows)
+    define_phase = phases.get("define", "pending")
+    build_phase = phases.get("build", "pending")
 
     planning = [ReviewNode("plan", "Plan", "Canonical contract", "complete", "#source")]
-    planning.extend(_fable_nodes(goal_dir, goal, fable_selected))
-    planning.extend(_pro_nodes(goal_dir, goal, pro_selected, "plan"))
-    planning.append(ReviewNode("build", "Build", "Implementation gate", "pending", "#activity"))
+    fable = _fable_nodes(goal_dir, goal, fable_selected)
+    pro_plan = _pro_nodes(goal_dir, goal, pro_selected, "plan")
+    planning.extend(fable)
+    planning.extend(pro_plan)
+    planning_current = _planning_current_key(
+        goal_dir,
+        fable_selected=fable_selected,
+        fable_nodes=fable,
+        fable_verification=verification.get(FABLE_FEEDBACK_OPTION, "pending"),
+        pro_nodes=pro_plan,
+        define_phase=define_phase,
+        build_phase=build_phase,
+    )
+    if planning_current == "define-gate":
+        planning.append(ReviewNode("define-gate", "Define gate", "Current focus", "active", "#briefing"))
+    planning.append(
+        ReviewNode(
+            "build",
+            "Build",
+            "Implementation gate",
+            "active" if build_phase == "active" else "pending",
+            "#activity",
+        )
+    )
+    planning = _mark_current(planning, planning_current)
 
-    rescue = [ReviewNode("build-rescue", "Build", "Scientific work", "active", "#activity")]
+    rescue = [ReviewNode("build-rescue", "Build", "Scientific work", build_phase, "#activity")]
     rescue.extend(_rescue_nodes(goal_dir))
     rescue.append(ReviewNode("experiment", "Experiment", "Prediction-bound outcome", "pending", "#activity"))
     rescue.append(ReviewNode("return-build", "Return to build", "Apply verified learning", "pending", "#activity"))

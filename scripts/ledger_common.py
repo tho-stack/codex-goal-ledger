@@ -186,17 +186,40 @@ def gate_items(markdown: str) -> list[str]:
     if not plain or plain in NO_GATES_MARKERS:
         return []
 
-    items = list_items(markdown)
+    items: list[str] = []
+    narrative: list[str] = []
+    current: list[str] | None = None
+    pending_blank = False
+    for raw_line in markdown.splitlines():
+        marker = re.match(r"^\s*(?:[-*+] |\d+[.)] )(.+?)\s*$", raw_line)
+        if marker:
+            if current:
+                items.append(" ".join(current))
+            current = [marker.group(1).strip()]
+            pending_blank = False
+            continue
+
+        stripped = raw_line.strip()
+        if not stripped:
+            if current:
+                pending_blank = True
+            continue
+        if current is not None and (not pending_blank or raw_line[:1].isspace()):
+            current.append(stripped)
+            pending_blank = False
+            continue
+        if current:
+            items.append(" ".join(current))
+            current = None
+        narrative.append(stripped)
+        pending_blank = False
+    if current:
+        items.append(" ".join(current))
+
     actionable = [
         item
         for item in items
         if normalize_key(strip_markdown(item)) not in NO_GATES_MARKERS
-    ]
-    narrative = [
-        line.strip()
-        for line in markdown.splitlines()
-        if line.strip()
-        and not re.match(r"^\s*(?:[-*+] |\d+[.)] )", line)
     ]
     if narrative:
         actionable.insert(0, strip_markdown(" ".join(narrative)))

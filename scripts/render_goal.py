@@ -175,6 +175,7 @@ def _review_graph_html(lanes: tuple[object, ...]) -> str:
         layout = "stacked" if len(lane.nodes) > 6 else "inline"
         sequence: list[str] = []
         for index, node in enumerate(lane.nodes):
+            current_attr = ' aria-current="step"' if node.current else ""
             content = (
                 f'<span class="review-node-title">{escape(node.label)}</span>'
                 f'<span class="review-node-detail">{escape(node.detail)}</span>'
@@ -182,14 +183,15 @@ def _review_graph_html(lanes: tuple[object, ...]) -> str:
             if node.href:
                 node_html = (
                     f'<a href="{escape(node.href, quote=True)}" '
-                    f'data-state="{escape(node.state, quote=True)}">{content}</a>'
+                    f'data-state="{escape(node.state, quote=True)}"{current_attr}>{content}</a>'
                 )
             else:
                 node_html = (
-                    f'<span data-state="{escape(node.state, quote=True)}">{content}</span>'
+                    f'<span data-state="{escape(node.state, quote=True)}"{current_attr}>{content}</span>'
                 )
+            current_data = ' data-current="true"' if node.current else ""
             sequence.append(
-                f'<li class="review-node" data-state="{escape(node.state, quote=True)}">'
+                f'<li class="review-node" data-state="{escape(node.state, quote=True)}"{current_data}>'
                 f"{node_html}</li>"
             )
             if index < len(lane.edges):
@@ -555,7 +557,7 @@ def build_dashboard(goal_dir: Path, *, assume_synced_assets: bool = False) -> by
         if gates
         else "<p>No open gates.</p>"
     )
-    review_lanes = build_review_lanes(goal_dir, goal, verification_rows)
+    review_lanes = build_review_lanes(goal_dir, goal, phase_rows, verification_rows)
     tracks = progress_tracks(
         goal, phase_rows, verification_rows, len(gates), review_lanes
     )

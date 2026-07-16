@@ -10,6 +10,7 @@ Use this reference when the user asks for particular GPT-5.6 models or reasoning
 | Hardest planning pass | GPT-5.6 Sol at `max` | Reserve for genuinely difficult, quality-first work after checking the prompt and success criteria. |
 | Implementation | GPT-5.6 Luna at `max` through `goal-ledger-implementer` | Owned, reproducible implementation lane without a plugin dependency. |
 | Final adversarial review | GPT-5.6 Sol at `xhigh`, optionally `max` | Independent closeout against the completion contract. |
+| Frequent operational gate review | GPT-5.6 Luna at `high` through `goal-ledger-gate-reviewer` | Fast bounded checks without tying up the deep planning runtime. |
 
 This is a recommendation, not a universal default. Preserve the user's explicit model and effort choices. For routine or latency-sensitive work, establish a baseline and test lower effort when quality remains acceptable.
 
@@ -44,7 +45,7 @@ Valid effective values include an exact confirmed model/effort, `current-runtime
 4. Record the invoked role before execution and the effective model/effort only from runtime evidence. Configuration or a desired assignment is not runtime proof.
 5. If exact controls do not exist, continue only when the fallback stays within scope; record the fallback or blocker visibly.
 
-The shipped reviewer is `goal-ledger-reviewer`, pinned to GPT-5.6 Sol at `xhigh`. Keep interactive planning in the root task so required questions and optional-information prompts reach the user immediately.
+The shipped fast reviewer is `goal-ledger-gate-reviewer`, pinned to GPT-5.6 Luna at `high`, for bounded operational gates. In an already-open task where that new role is not session-visible, use a read-only default subagent with explicit `gpt-5.6-luna` and `high` controls when supported, and record it as an invoked fallback rather than a confirmed owned-role execution. The shipped deep reviewer is `goal-ledger-reviewer`, pinned to GPT-5.6 Sol at `xhigh`, for scientific, architectural, security, or final adversarial review. Keep interactive planning in the root task so required questions and optional-information prompts reach the user immediately.
 
 ## Drift
 

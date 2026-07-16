@@ -16,6 +16,7 @@ from ledger_common import (
     EVIDENCE_RESULTS,
     EXECUTION_HEALTH,
     GOAL_STATUSES,
+    NO_GATES_MARKERS,
     PHASE_STATES,
     Document,
     LedgerError,
@@ -925,6 +926,36 @@ def _validate_dashboard(
                 problems.add(f"{index_path}: body goal status does not match goal.md")
             if body_tags[0].get("data-execution-health") != expected_health:
                 problems.add(f"{index_path}: body execution health does not match progress.md")
+
+        gates_markdown = get_section(progress, "Open gates")
+        marker_items = list_items(gates_markdown)
+        actionable_markers = [
+            item
+            for item in marker_items
+            if normalize_key(strip_markdown(item)) not in NO_GATES_MARKERS
+        ]
+        if actionable_markers:
+            declared = re.search(
+                r'<span class="gate-count">(\d+) open</span>', text
+            )
+            rendered = re.search(
+                r'<div class="gate-list"><ul>(.*?)</ul></div>',
+                text,
+                flags=re.DOTALL,
+            )
+            declared_count = int(declared.group(1)) if declared else -1
+            rendered_count = (
+                len(re.findall(r"<li(?:\s[^>]*)?>", rendered.group(1)))
+                if rendered
+                else -1
+            )
+            marker_count = len(actionable_markers)
+            if declared_count != marker_count or rendered_count != marker_count:
+                problems.add(
+                    f"{index_path}: open-gate rendering count mismatch; Markdown has "
+                    f"{marker_count} actionable list items, dashboard declares "
+                    f"{declared_count} and renders {rendered_count}"
+                )
         try:
             expected = build_dashboard(goal_dir)
         except (LedgerError, OSError) as exc:

@@ -173,6 +173,10 @@ class ReviewGraphTests(unittest.TestCase):
         self.assertIn("return for revision", html)
         self.assertIn('data-direction="return"', html)
         self.assertIn('data-layout="inline"', html)
+        self.assertIn('data-current="true"', html)
+        self.assertIn('aria-current="step"', html)
+        self.assertIn("Define gate", html)
+        self.assertIn("Current focus", html)
         self.assertIn("1 / 1 selected lanes reconciled", html)
         self.assertNotIn("COMPLETION_PERCENT", html)
 
@@ -189,6 +193,8 @@ class ReviewGraphTests(unittest.TestCase):
         self.assertNotIn("text-align: end", edge_rule)
         self.assertNotIn("min-width: max-content", css)
         self.assertIn("@media (prefers-reduced-motion: reduce)", css)
+        self.assertIn("active-node-breathe", css)
+        self.assertIn("active-node-sweep", css)
 
 
 if __name__ == "__main__":

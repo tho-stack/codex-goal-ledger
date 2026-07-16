@@ -121,7 +121,7 @@ If a log grows past roughly 30 entries, roll older entries into `evidence/log-<d
 
 Every delegated item gets an owner, state, and recovery action. Until return, name the expected output in the recovery action; after return, repatriate it to a stable path and record that path before marking custody complete.
 
-Use the selected Goal Ledger implementer preset for bounded implementation and `goal-ledger-reviewer` for independent read-only review. A swarm may mix presets only across independently owned work items; record the exact agent name on every Custody row and reconcile each worker's runtime evidence separately. If the orchestration surface cannot expose a selected role or explicit model and effort controls, record that limitation. Do not encode configuration or desired routing as an accomplished runtime assignment.
+Use the selected Goal Ledger implementer preset for bounded implementation, `goal-ledger-gate-reviewer` for fast independent operational gates, and `goal-ledger-reviewer` for deep or final independent review. Give the gate reviewer only the immutable gate packet and named evidence required for `GO`, `BLOCKED`, or `NEEDS_DEEP_REVIEW`; escalate the last verdict rather than expanding the fast review indefinitely. A swarm may mix presets only across independently owned work items; record the exact agent name on every Custody row and reconcile each worker's runtime evidence separately. If the orchestration surface cannot expose a selected role or explicit model and effort controls, record that limitation. Do not encode configuration or desired routing as an accomplished runtime assignment.
 
 ## 7. Recover after interruption
 

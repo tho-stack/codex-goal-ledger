@@ -10,6 +10,6 @@ The user-provided GPT-5.6 Sol guide favors outcome-first prompts, explicit compl
 
 The live delegation surface exposed explicit GPT-5.6 Luna selection and `max` effort, plus custom registered agent types. The user had removed LazyCodex, while an already-open task still advertised stale LazyCodex roles; filesystem leftovers and a stale task schema are not installation proof.
 
-Goal Ledger therefore ships an owned implementation fleet: Luna Max, Luna High, Terra Ultra, Sol Medium, Sol XHigh, and Sol Ultra, plus `goal-ledger-reviewer` at Sol XHigh. Installation state, visibility in a newly opened task, invocation, and the effective runtime profile remain separate evidence gates.
+Goal Ledger therefore ships an owned implementation fleet: Luna Max, Luna High, Terra Ultra, Sol Medium, Sol XHigh, and Sol Ultra, plus `goal-ledger-gate-reviewer` at Luna High for fast operational gates and `goal-ledger-reviewer` at Sol XHigh for deep closeout review. Installation state, visibility in a newly opened task, invocation, and the effective runtime profile remain separate evidence gates.
 
 These observations do not guarantee the same controls in another Codex surface. Record requested, invoked, and effective execution profiles independently and never infer a successful switch from configuration or a desired assignment.

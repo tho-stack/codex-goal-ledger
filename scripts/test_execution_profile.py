@@ -11,7 +11,7 @@ import sys
 import tempfile
 import unittest
 
-from agent_profiles import IMPLEMENTER_PROFILES
+from agent_profiles import IMPLEMENTER_PROFILES, REVIEWER_PROFILES
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -105,6 +105,18 @@ class ExecutionProfileTests(unittest.TestCase):
                 for name in payload["profiles"]
                 if name.startswith("goal-ledger-implementer")
             },
+        )
+        self.assertEqual(
+            {profile.name for profile in REVIEWER_PROFILES},
+            {
+                name
+                for name in payload["profiles"]
+                if name.startswith("goal-ledger-") and "reviewer" in name
+            },
+        )
+        self.assertEqual(
+            {"model": "gpt-5.6-luna", "effort": "high"},
+            payload["profiles"]["goal-ledger-gate-reviewer"],
         )
         self.assertEqual(
             {

@@ -42,7 +42,8 @@ The three review roles are intentionally different:
 
 - **Fable planning peer** challenges the plan before Build. It may propose missing information, features, and scientific hypotheses. Selecting it authorizes preparing the Anthropic review lane; each exact read-only manifest still receives an owner-facing native approval checkbox, then is preserved and reconciled before the next round.
 - **GPT Pro** is an independent high-context gate for the plan, the implementation, or both. A `BLOCKED` result returns to revision; `SIGNED OFF` advances only after Codex records a typed, locally verified reconciliation.
-- **Codex closeout reviewer** runs after Verify. Accepted findings return to Build or Verify, then the closeout evidence is refreshed before Close.
+- **Fast gate reviewer** uses Luna High for repeated manifest, custody, dashboard, launch, recovery, and narrow post-fix checks. It returns `GO`, `BLOCKED`, or `NEEDS_DEEP_REVIEW` without occupying the Sol Ultra planning lane.
+- **Codex closeout reviewer** uses Sol XHigh after Verify. Accepted findings return to Build or Verify, then the closeout evidence is refreshed before Close.
 
 **Fable rescue is not another routine review.** It is available only after Build reaches a qualified scientific impasse and operational causes have been ruled out. The rescue packet freezes the question, evidence, competing explanations, prediction, and experiment boundary. Fable remains advisory; Codex must classify every proposal, run the authorized prediction-locked experiment, record the outcome, and return the verified learning to Build. Rescue advice can never serve as completion evidence by itself.
 

@@ -801,6 +801,38 @@ h1 {
   border-block-start-color: var(--mineral);
 }
 
+.review-node[data-current="true"] > * {
+  position: relative;
+  overflow: hidden;
+  border-color: var(--mineral);
+  border-block-start-color: var(--mineral);
+  background: color-mix(in oklch, var(--mineral) 8%, var(--paper-raised));
+  box-shadow: 0 0 0 0.16rem color-mix(in oklch, var(--mineral) 18%, transparent);
+  animation: active-node-breathe 2.8s var(--ease-out) infinite;
+}
+
+.review-node[data-current="true"] > *::after {
+  content: "";
+  position: absolute;
+  inset: -35% auto -35% -55%;
+  width: 24%;
+  background: linear-gradient(
+    100deg,
+    transparent,
+    color-mix(in oklch, var(--mineral) 32%, transparent),
+    transparent
+  );
+  pointer-events: none;
+  transform: translateX(-180%) skewX(-12deg);
+  animation: active-node-sweep 3.4s var(--ease-out) infinite;
+}
+
+.review-node[data-current="true"] .review-node-title,
+.review-node[data-current="true"] .review-node-detail {
+  position: relative;
+  z-index: 1;
+}
+
 .review-node[data-state="pending"] > * {
   border-block-start-color: var(--amber);
   border-style: dashed;
@@ -809,6 +841,35 @@ h1 {
 .review-node-title,
 .review-node-detail {
   display: block;
+}
+
+@keyframes active-node-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0.16rem color-mix(in oklch, var(--mineral) 18%, transparent);
+  }
+
+  50% {
+    box-shadow: 0 0 0 0.3rem color-mix(in oklch, var(--mineral) 26%, transparent);
+  }
+}
+
+@keyframes active-node-sweep {
+  0%,
+  48% {
+    opacity: 0;
+    transform: translateX(-180%) skewX(-12deg);
+  }
+
+  58% {
+    opacity: 1;
+  }
+
+  78%,
+  100% {
+    opacity: 0;
+    transform: translateX(720%) skewX(-12deg);
+  }
 }
 
 .review-node-title {
