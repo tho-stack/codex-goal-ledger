@@ -602,8 +602,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--transport-attempts",
         type=int,
-        default=2,
-        help="Bounded durable transport attempts for operational failures (default: 2).",
+        default=1,
+        help="Compatibility option; must be 1 because automatic resubmission is forbidden.",
     )
     parser.add_argument(
         "--context-file",

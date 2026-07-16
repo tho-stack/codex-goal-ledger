@@ -879,11 +879,21 @@ def _validate_dashboard(
         for attrs in _tags(audit, "link")
         if "stylesheet" in (attrs.get("rel") or "").split()
     ]
-    if not any(attrs.get("href") == "../../assets/goal-ledger.css" for attrs in stylesheets):
+    if not any(
+        re.fullmatch(
+            r"\.\./\.\./assets/goal-ledger\.css\?v=[0-9a-f]{12}",
+            attrs.get("href") or "",
+        )
+        for attrs in stylesheets
+    ):
         problems.add(f"{index_path}: missing shared goal-ledger.css reference")
     scripts = _tags(audit, "script")
     if not any(
-        attrs.get("src") == "../../assets/goal-ledger.js" and "defer" in attrs
+        re.fullmatch(
+            r"\.\./\.\./assets/goal-ledger\.js\?v=[0-9a-f]{12}",
+            attrs.get("src") or "",
+        )
+        and "defer" in attrs
         for attrs in scripts
     ):
         problems.add(f"{index_path}: shared goal-ledger.js must be loaded with defer")

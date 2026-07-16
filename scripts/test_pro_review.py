@@ -278,11 +278,20 @@ class ProReviewTests(unittest.TestCase):
         plan = json.loads((self.round_dir / "delivery-plan.json").read_text())
         self.assertEqual("auto-ui", plan["configured_delivery"])
         expected = (
-            ["safari-assisted", "chrome-assisted", "chatgpt-desktop", "owner-handoff"]
+            ["safari-assisted", "chrome-assisted", "owner-handoff"]
             if plan["host_platform"] == "Darwin"
-            else ["chrome-assisted", "chatgpt-desktop", "owner-handoff"]
+            else ["chrome-assisted", "owner-handoff"]
         )
         self.assertEqual(expected, plan["candidates"])
+        self.assertEqual(
+            "goal-ledger-restricted-mcp-app",
+            plan["transport_drivers"]["mcp-app"],
+        )
+        self.assertEqual("computer-use-mcp", plan["transport_drivers"]["browser"])
+        self.assertTrue(plan["automatic_submission"])
+        self.assertIn("chatgpt-desktop", plan["excluded_surfaces"])
+        self.assertFalse(plan["mcp_app_contract"]["live_repository_access"])
+        self.assertFalse(plan["mcp_app_contract"]["shell_access"])
 
         assisted = [item for item in plan["candidates"] if item != "owner-handoff"]
         result = None

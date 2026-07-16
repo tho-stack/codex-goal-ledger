@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from hashlib import sha256
 from html import escape
 from pathlib import Path
 import sys
@@ -48,6 +49,11 @@ PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 ASSET_ROOT = PACKAGE_ROOT / "assets"
 TEMPLATE_PATH = ASSET_ROOT / "templates" / "index.html"
 SHARED_ASSETS = ("goal-ledger.css", "goal-ledger.js")
+
+
+def _asset_version(name: str) -> str:
+    """Return a short content hash for deterministic browser cache busting."""
+    return sha256((ASSET_ROOT / name).read_bytes()).hexdigest()[:12]
 
 
 def _metadata(document: Document, key: str) -> str:
@@ -172,38 +178,49 @@ def _phase_rail(rows: list[list[str]]) -> str:
 def _review_graph_html(lanes: tuple[object, ...]) -> str:
     rendered: list[str] = []
     for lane in lanes:
-        layout = "stacked" if len(lane.nodes) > 6 else "inline"
         sequence: list[str] = []
         for index, node in enumerate(lane.nodes):
             current_attr = ' aria-current="step"' if node.current else ""
+            completed_mark = (
+                '<span class="review-node-check" aria-label="Completed review" '
+                'title="Completed review">✓</span>'
+                if node.completed
+                else ""
+            )
             content = (
+                f'<span class="review-node-order" aria-hidden="true">{index + 1:02d}</span>'
+                f"{completed_mark}"
                 f'<span class="review-node-title">{escape(node.label)}</span>'
                 f'<span class="review-node-detail">{escape(node.detail)}</span>'
             )
             if node.href:
                 node_html = (
-                    f'<a href="{escape(node.href, quote=True)}" '
+                    f'<a class="review-node" href="{escape(node.href, quote=True)}" '
                     f'data-state="{escape(node.state, quote=True)}"{current_attr}>{content}</a>'
                 )
             else:
                 node_html = (
-                    f'<span data-state="{escape(node.state, quote=True)}"{current_attr}>{content}</span>'
+                    f'<span class="review-node" data-state="{escape(node.state, quote=True)}"'
+                    f'{current_attr}>{content}</span>'
                 )
             current_data = ' data-current="true"' if node.current else ""
-            sequence.append(
-                f'<li class="review-node" data-state="{escape(node.state, quote=True)}"{current_data}>'
-                f"{node_html}</li>"
-            )
+            completed_data = ' data-completed="true"' if node.completed else ""
+            edge_html = ""
             if index < len(lane.edges):
                 edge = lane.edges[index]
                 arrow = "↩" if edge.direction == "return" else "→"
-                sequence.append(
-                    f'<li class="review-edge" data-state="{escape(edge.state, quote=True)}" '
+                edge_html = (
+                    f'<div class="review-edge" data-state="{escape(edge.state, quote=True)}" '
                     f'data-direction="{escape(edge.direction, quote=True)}">'
-                    f'<span aria-hidden="true">{arrow}</span><small>{escape(edge.label)}</small></li>'
+                    f'<span aria-hidden="true">{arrow}</span><small>{escape(edge.label)}</small></div>'
                 )
+            sequence.append(
+                f'<li class="review-step" data-node="{escape(node.key, quote=True)}" '
+                f'data-state="{escape(node.state, quote=True)}"{completed_data}{current_data}>'
+                f"{node_html}{edge_html}</li>"
+            )
         rendered.append(
-            f'<section class="review-lane" data-layout="{layout}" '
+            f'<section class="review-lane" data-layout="flow" '
             f'aria-labelledby="review-lane-{escape(lane.key, quote=True)}">'
             f'<h3 id="review-lane-{escape(lane.key, quote=True)}">{escape(lane.label)}</h3>'
             f'<ol>{"".join(sequence)}</ol></section>'
@@ -565,6 +582,8 @@ def build_dashboard(goal_dir: Path, *, assume_synced_assets: bool = False) -> by
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     values = {
             "DIGEST": digest,
+            "CSS_VERSION": _asset_version("goal-ledger.css"),
+            "JS_VERSION": _asset_version("goal-ledger.js"),
             "TITLE_ATTR": escape(title, quote=True),
             "TITLE": escape(title),
             "STATUS_ATTR": escape(status, quote=True),

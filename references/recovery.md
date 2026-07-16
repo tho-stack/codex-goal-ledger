@@ -19,6 +19,8 @@ Do not overwrite an existing ledger, discard an unverified output, or restart a 
 
 Record `execution_health: interrupted`. This proves only that the root run stopped. Inspect delegated workers and outputs before changing goal state or custody.
 
+For a long-running command, inspect its recorded tmux session before concluding that work stopped. Use the session, process tree, heartbeat, monitor, immutable segment logs, and checkpoints together. A missing terminal does not invalidate a healthy detached supervisor. A missing tmux session does not prove every child exited. Do not kill an orphan reflexively: preserve the attempt and determine whether custody can be recovered first. Reuse only validated hash-bound checkpoints, carry cumulative budgets and resource maxima across segments, and retry only the interrupted uncommitted dependency-complete unit. If no admissible checkpoint exists, report that limitation and rerun the smallest sound unit rather than fabricating results from process-state metadata. Follow [durable-execution.md](durable-execution.md).
+
 ### Worker returned after the root stopped
 
 Move its output to a stable path, run the relevant check, and mark custody `complete` only after reconciliation. A returned artifact is evidence, not automatic proof of the success criterion.
@@ -45,7 +47,7 @@ A recorded Fable choice of `yes` plus `fable_review_rounds` authorizes preparing
 
 ### GPT Pro submission or capture was interrupted
 
-Read `evidence/pro-review/<stage>/round-NNN/state.json` and follow [pro-review.md](pro-review.md). `packet-ready` means probe the next ordered surface in `delivery-plan.json`; record the result instead of guessing availability. `ui-ready` may be submitted once through the recorded ready surface. `manual-handoff-ready` means present the checksum-bound owner instructions without calling the goal blocked solely for awaiting handoff. `submitted-waiting-response` means reopen and poll the existing thread; never send again. `response-received` means reconcile the preserved full response. A partial UI copy is not a response artifact: resume ordered capture from the same answer, verify its beginning and end, then record it once. Never fall back to prompt-only or a separate `$pro` skill.
+Read `evidence/pro-review/<stage>/round-NNN/state.json` and follow [pro-review.md](pro-review.md). `packet-ready` means probe the selected transport in `delivery-plan.json`; for `mcp-app`, restart the exact round-bound command from `run_review_bridge.py print-command` and rerun its packet preflight, while `auto-ui` continues through its platform order. Record the result instead of guessing availability. `ui-ready` may be submitted once through the recorded ready MCP App or browser surface. `manual-handoff-ready` means present the checksum-bound owner instructions without calling the goal blocked solely for awaiting handoff. `submitted-waiting-response` means reopen the same Pro conversation or restart only the identical manifest-bound MCP bridge; never send again or switch transports. `response-received` means reconcile the preserved full response. A partial UI copy is not a response artifact: resume ordered capture from the same answer, verify its beginning and end, then record it once. If optional MCP setup is unavailable before submission, continue to an already-authorized browser or owner route rather than inventing a new approval gate. Never fall back to prompt-only or a separate `$pro` skill.
 
 ### Ledger facts conflict
 

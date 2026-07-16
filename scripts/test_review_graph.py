@@ -172,32 +172,140 @@ class ReviewGraphTests(unittest.TestCase):
         self.assertNotIn("Verified fixes before re-review", html)
         self.assertIn("return for revision", html)
         self.assertIn('data-direction="return"', html)
-        self.assertIn('data-layout="inline"', html)
-        self.assertIn('data-current="true"', html)
-        self.assertIn('aria-current="step"', html)
+        self.assertIn('data-layout="flow"', html)
+        self.assertIn('class="review-step"', html)
+        self.assertIn('class="review-node-order" aria-hidden="true">01</span>', html)
+        self.assertIn(
+            'data-node="pro-plan-1" data-state="blocked" data-completed="true"',
+            html,
+        )
+        self.assertIn(
+            'data-node="define-gate" data-state="active" data-current="true"',
+            html,
+        )
         self.assertIn("Define gate", html)
-        self.assertIn("Current focus", html)
+        self.assertIn('href="#briefing"', html)
+        self.assertNotIn(
+            'data-node="build" data-state="pending" data-current="true"',
+            html,
+        )
+        self.assertIn('class="review-node-check" aria-label="Completed review"', html)
         self.assertIn("1 / 1 selected lanes reconciled", html)
         self.assertNotIn("COMPLETION_PERCENT", html)
+
+    def test_historic_plan_reviews_remain_after_implementation_stage_is_selected(self) -> None:
+        self.complete_round(1, "BLOCKED")
+        self.complete_round(2, "SIGNED OFF")
+        goal_path = self.goal_dir / "goal.md"
+        goal_text = goal_path.read_text(encoding="utf-8")
+        goal_path.write_text(
+            goal_text.replace(
+                "pro_review_stage: plan", "pro_review_stage: implementation", 1
+            ),
+            encoding="utf-8",
+        )
+
+        self.run_tool("render_goal.py", self.goal_dir)
+        html = (self.goal_dir / "index.html").read_text(encoding="utf-8")
+        self.assertIn(
+            'data-node="pro-plan-1" data-state="blocked" data-completed="true"',
+            html,
+        )
+        self.assertIn(
+            'data-node="pro-plan-2" data-state="pass" data-completed="true"',
+            html,
+        )
+        self.assertIn(
+            'data-node="pro-implementation-1" data-state="pending"',
+            html,
+        )
+        self.assertIn(
+            'data-node="pro-implementation-2" data-state="pending"',
+            html,
+        )
+        self.assertIn("0 / 1 selected lanes reconciled", html)
+
+    def test_current_marker_follows_review_gate_not_rescue_build_placeholder(self) -> None:
+        html = (self.goal_dir / "index.html").read_text(encoding="utf-8")
+        self.assertIn(
+            'data-node="pro-plan-1" data-state="pending" data-current="true"',
+            html,
+        )
+        self.assertIn(
+            'data-node="build-rescue" data-state="pending"',
+            html,
+        )
+        self.assertNotIn(
+            'data-node="build-rescue" data-state="active" data-current="true"',
+            html,
+        )
+
+    def test_later_submitted_round_is_current_after_reconciled_blocked_round(self) -> None:
+        self.complete_round(1, "BLOCKED")
+        self.run_tool(
+            "run_pro_review.py",
+            "prepare",
+            self.goal_dir,
+            "--stage",
+            "plan",
+            "--round",
+            2,
+            "--decision",
+            "Approve this revised plan for implementation.",
+        )
+        self.run_tool(
+            "run_pro_review.py",
+            "record-submission",
+            self.goal_dir,
+            "--stage",
+            "plan",
+            "--round",
+            2,
+            "--model-visible",
+            "Pro Extended",
+            "--transport",
+            "owner-handoff",
+            "--thread",
+            "Graph review round 2",
+        )
+        self.run_tool("render_goal.py", self.goal_dir)
+        html = (self.goal_dir / "index.html").read_text(encoding="utf-8")
+        self.assertIn(
+            'data-node="pro-plan-1" data-state="blocked"',
+            html,
+        )
+        self.assertNotIn(
+            'data-node="pro-plan-1" data-state="blocked" data-current="true"',
+            html,
+        )
+        self.assertIn(
+            'data-node="pro-plan-2" data-state="active" data-current="true"',
+            html,
+        )
 
     def test_dashboard_css_keeps_review_graph_responsive_and_reduced_motion(self) -> None:
         css = (SCRIPT_DIR.parent / "assets" / "goal-ledger.css").read_text()
         self.assertIn(".review-circuit-scroll", css)
         self.assertIn("overflow-x: visible", css)
-        self.assertIn('.review-lane[data-layout="stacked"]', css)
+        self.assertIn('grid-template-columns: repeat(auto-fit, minmax(min(100%, 13.5rem), 1fr))', css)
         self.assertIn("grid-template-columns: clamp(6rem, 9vw, 8rem) minmax(0, 1fr)", css)
-        self.assertIn("flex: 0 1 4.25rem", css)
+        self.assertIn("justify-content: center", css)
         edge_rule = css.split(".review-edge > span {", 1)[1].split("}", 1)[0]
-        self.assertIn("font-size: 1.35rem", edge_rule)
+        self.assertIn("font-size: 1.45rem", edge_rule)
         self.assertIn("text-align: center", edge_rule)
         self.assertNotIn("text-align: end", edge_rule)
-        self.assertNotIn("min-width: max-content", css)
-        self.assertIn("@media (prefers-reduced-motion: reduce)", css)
-        self.assertIn("active-node-breathe", css)
-        self.assertIn("active-node-sweep", css)
+        self.assertIn("@keyframes active-node-sweep", css)
+        self.assertIn("@keyframes active-node-breathe", css)
+        self.assertIn("@keyframes active-phase-beacon", css)
+        self.assertIn('.review-step[data-current="true"] .review-node-title::after', css)
+        self.assertIn('content: "Live"', css)
+        self.assertIn('.activity-row[data-state="active"]', css)
+        self.assertIn('animation: none !important', css)
         opening_rule = css.split(".opening {", 1)[1].split("}", 1)[0]
         self.assertIn("align-items: start", opening_rule)
         self.assertNotIn("align-items: end", opening_rule)
+        self.assertNotIn("min-width: max-content", css)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", css)
 
 
 if __name__ == "__main__":

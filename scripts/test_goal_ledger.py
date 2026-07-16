@@ -155,7 +155,7 @@ class GoalLedgerTests(unittest.TestCase):
         for phase in ("Define", "Build", "Verify", "Close"):
             text, count = re.subn(
                 rf"^(\| {phase} \| )(?:active|pending)( \|)",
-                rf"\1complete\2",
+                r"\1complete\2",
                 text,
                 count=1,
                 flags=re.MULTILINE,
@@ -224,6 +224,14 @@ class GoalLedgerTests(unittest.TestCase):
         self.assertIn("Progress without a synthetic score", html_text)
         self.assertIn("Review circuit", html_text)
         self.assertIn("1 / 5 phases resolved", html_text)
+        self.assertRegex(
+            html_text,
+            r'goal-ledger\.css\?v=[0-9a-f]{12}',
+        )
+        self.assertRegex(
+            html_text,
+            r'goal-ledger\.js\?v=[0-9a-f]{12}',
+        )
 
         self.render(goal_dir, "--check")
         self.validate(goal_dir)
@@ -829,6 +837,9 @@ class GoalLedgerTests(unittest.TestCase):
         closeout = (package_root / "references" / "closeout-kit.md").read_text(
             encoding="utf-8"
         )
+        controls = (package_root / "references" / "planning-controls.md").read_text(
+            encoding="utf-8"
+        )
         default_prompt = (package_root / "agents" / "openai.yaml").read_text(
             encoding="utf-8"
         )
@@ -850,10 +861,22 @@ class GoalLedgerTests(unittest.TestCase):
             self.assertIn("must not block", contract)
 
         self.assertLess(skill.index("request_user_input"), skill.index("## Operate"))
+        self.assertIn("two consecutive three-question", skill)
+        self.assertIn("Do not render a prose questionnaire", controls)
+        self.assertIn("Luna | Max | `goal-ledger-implementer`", controls)
+        self.assertIn("Sol | Ultra | `goal-ledger-implementer-sol-ultra`", controls)
+        self.assertIn(
+            "does not expose a literal multi-select checkbox group or range slider",
+            controls,
+        )
+        self.assertIn("Do not ask the user to type or click a second", controls)
         self.assertIn("first planning checkpoint", default_prompt)
         self.assertIn("optional Claude Fable planning rounds", default_prompt)
         self.assertIn("bounded scientific rescue", default_prompt)
-        self.assertIn("native GPT Pro prompt-plus-ZIP review", default_prompt)
+        self.assertIn("native GPT Pro review", default_prompt)
+        self.assertIn("bundled restricted MCP App", default_prompt)
+        self.assertIn("app-native controls", default_prompt)
+        self.assertIn("owner-facing external-review approval routing", default_prompt)
         self.assertIn("multi_agent_v2", default_prompt)
         self.assertIn("extra context that could improve", default_prompt)
 
@@ -890,6 +913,35 @@ class GoalLedgerTests(unittest.TestCase):
         self.assertIn('model = "gpt-5.6-luna"', profile)
         self.assertIn('model_reasoning_effort = "high"', profile)
         self.assertIn("Remain read-only", profile)
+
+    def test_planning_contract_keeps_independent_workstreams_parallel(self) -> None:
+        package_root = SCRIPT_DIR.parent
+        skill = (package_root / "SKILL.md").read_text(encoding="utf-8")
+        workflow = (package_root / "references" / "workflow.md").read_text(
+            encoding="utf-8"
+        )
+        progress_template = (
+            package_root / "assets" / "templates" / "progress.md"
+        ).read_text(encoding="utf-8")
+        progress_reference = (
+            package_root / "references" / "progress-template.md"
+        ).read_text(encoding="utf-8")
+
+        for contract in (skill, workflow, progress_reference):
+            self.assertIn("not a mutex", contract)
+            self.assertIn("dependency-free", contract)
+            self.assertIn("research", contract)
+            self.assertIn("implementation", contract)
+            self.assertIn("reserve", contract.casefold())
+            self.assertIn("recursive", contract.casefold())
+            self.assertIn("interrupted", contract.casefold())
+
+        self.assertIn("## Parallel workstreams", progress_template)
+        self.assertIn(
+            "Workstream | Deliverable | Blocked by | Mutation class | State | Evidence",
+            progress_template,
+        )
+        self.assertIn("read-only", progress_template)
 
 
 if __name__ == "__main__":

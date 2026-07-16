@@ -26,6 +26,13 @@ The durable goal is initialized and ready for contract review. No implementation
 
 Confirm the contract, execution profile, and first observable milestone.
 
+## Parallel workstreams
+
+| Workstream | Deliverable | Blocked by | Mutation class | State | Evidence |
+| --- | --- | --- | --- | --- | --- |
+| Contract definition | Executable goal contract and critical-path gate | none | repository-write | active | `goal.md` and this ledger |
+| Independent research | Decision-ready research brief for any lane not gated by contract definition | bounded discovery | read-only | queued | Record the stable evidence path before starting. |
+
 ## Work log
 
 - {{DATE}}: Initialized the goal ledger and generated its dashboard.

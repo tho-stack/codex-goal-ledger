@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 import socket
 import subprocess
@@ -21,6 +20,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import serve_dashboard  # noqa: E402
+from ledger_common import LedgerError  # noqa: E402
 from preview_common import load_preview_state  # noqa: E402
 
 
@@ -114,6 +114,20 @@ class PreviewServerTests(unittest.TestCase):
             with urlopen(state.health_url, timeout=3) as response:
                 health = json.load(response)
             self.assertTrue(health["ok"])
+            checked = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_DIR / "serve_dashboard.py"),
+                    str(self.goal_dir),
+                    "--check",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(0, checked.returncode, checked.stderr)
+            self.assertIn("Preview is healthy", checked.stdout)
 
             with urlopen(state.url + "assets/goal-ledger.css", timeout=3) as response:
                 css = response.read().decode("utf-8")
@@ -189,6 +203,30 @@ class PreviewServerTests(unittest.TestCase):
             occupied.close()
             if server is not None:
                 server.server_close()
+
+    def test_preview_state_rejects_noncanonical_health_target(self) -> None:
+        state_path = self.goal_dir / "evidence" / "preview-server.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "state": "running",
+                    "transport": "localhost",
+                    "bind_host": "127.0.0.1",
+                    "display_host": "127.0.0.1",
+                    "port": 4173,
+                    "url": "http://127.0.0.1:4173/",
+                    "health_url": "http://169.254.169.254/latest/meta-data/",
+                    "pid": 1,
+                    "started_at": "2026-07-15T00:00:00Z",
+                    "last_health_check": "",
+                    "stopped_at": "",
+                    "detail": "forged",
+                }
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(LedgerError, "health URL does not match"):
+            load_preview_state(self.goal_dir)
 
 
 if __name__ == "__main__":

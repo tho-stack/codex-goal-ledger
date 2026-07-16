@@ -212,64 +212,95 @@ def run_claude_durable(
     transport_dir: Path,
     invocation_id: str,
     timeout_seconds: int,
-    max_attempts: int = 2,
+    max_attempts: int = 1,
 ) -> DurableClaudeResult:
     """Run Claude with durable capture and reuse a completed matching invocation.
 
     A detached or output-losing outer wrapper does not affect the files written here. A
     subsequent call reuses the completed matching response and never submits it again.
     """
-    if max_attempts < 1:
-        raise LedgerError("Fable transport max_attempts must be at least one")
-    transport_dir.mkdir(parents=True, exist_ok=True)
-    for attempt in range(1, max_attempts + 1):
-        attempt_dir = transport_dir / f"attempt-{attempt}"
-        status_path = attempt_dir / "transport.json"
-        stdout_path = attempt_dir / "raw-response.json"
-        stderr_path = attempt_dir / "stderr.txt"
-        status = _read_status(status_path)
-        if status and status.get("invocation_digest") == invocation_id:
-            if status.get("state") == "completed" and stdout_path.is_file():
-                return DurableClaudeResult(
-                    int(status.get("returncode", 1)),
-                    stdout_path.read_text(encoding="utf-8"),
-                    stderr_path.read_text(encoding="utf-8") if stderr_path.is_file() else "",
-                    True,
-                    attempt,
-                )
-            if status.get("state") == "running" and _pid_alive(status.get("pid")):
-                raise LedgerError(
-                    f"matching Claude Fable invocation is still running as PID "
-                    f"{status.get('pid')}; do not submit a duplicate"
-                )
-        if status and status.get("state") == "completed":
-            continue
-
-        attempt_dir.mkdir(parents=True, exist_ok=True)
-        stdout_partial = attempt_dir / ".raw-response.json.partial"
-        stderr_partial = attempt_dir / ".stderr.txt.partial"
-        started = _utc_now()
-        atomic_write_json(
-            status_path,
-            {
-                "schema_version": 1,
-                "state": "starting",
-                "invocation_digest": invocation_id,
-                "attempt": attempt,
-                "started": started,
-            },
+    if max_attempts != 1:
+        raise LedgerError(
+            "automatic Fable resubmission is disabled; max_attempts must be exactly one"
         )
+    transport_dir.mkdir(parents=True, exist_ok=True)
+    attempt = 1
+    attempt_dir = transport_dir / "attempt-1"
+    status_path = attempt_dir / "transport.json"
+    stdout_path = attempt_dir / "raw-response.json"
+    stderr_path = attempt_dir / "stderr.txt"
+    status = _read_status(status_path)
+    if status:
+        if status.get("invocation_digest") != invocation_id:
+            raise LedgerError(
+                "Fable transport directory belongs to a different invocation; preserve it and "
+                "use a new manifest-bound transport directory"
+            )
+        state = status.get("state")
+        if state == "completed":
+            if not stdout_path.is_file():
+                raise LedgerError(
+                    f"completed Fable transport is missing durable stdout: {transport_dir}"
+                )
+            return DurableClaudeResult(
+                int(status.get("returncode", 1)),
+                stdout_path.read_text(encoding="utf-8"),
+                stderr_path.read_text(encoding="utf-8") if stderr_path.is_file() else "",
+                True,
+                attempt,
+            )
+        if state == "running" and _pid_alive(status.get("pid")):
+            raise LedgerError(
+                f"matching Claude Fable invocation is still running as PID "
+                f"{status.get('pid')}; do not submit a duplicate"
+            )
+        if state != "launch_failed":
+            raise LedgerError(
+                f"matching Claude Fable invocation has uncertain state {state!r}; inspect "
+                f"{transport_dir} and do not submit a duplicate"
+            )
+
+    attempt_dir.mkdir(parents=True, exist_ok=True)
+    stdout_partial = attempt_dir / ".raw-response.json.partial"
+    stderr_partial = attempt_dir / ".stderr.txt.partial"
+    started = _utc_now()
+    atomic_write_json(
+        status_path,
+        {
+            "schema_version": 1,
+            "state": "starting",
+            "invocation_digest": invocation_id,
+            "attempt": attempt,
+            "started": started,
+        },
+    )
+    try:
         with stdout_partial.open("wb") as stdout_stream, stderr_partial.open(
             "wb"
         ) as stderr_stream:
-            process = subprocess.Popen(
-                list(command),
-                cwd=cwd,
-                env=dict(env),
-                stdin=subprocess.DEVNULL,
-                stdout=stdout_stream,
-                stderr=stderr_stream,
-            )
+            try:
+                process = subprocess.Popen(
+                    list(command),
+                    cwd=cwd,
+                    env=dict(env),
+                    stdin=subprocess.DEVNULL,
+                    stdout=stdout_stream,
+                    stderr=stderr_stream,
+                )
+            except OSError as exc:
+                atomic_write_json(
+                    status_path,
+                    {
+                        "schema_version": 1,
+                        "state": "launch_failed",
+                        "invocation_digest": invocation_id,
+                        "attempt": attempt,
+                        "started": started,
+                        "finished": _utc_now(),
+                        "error": str(exc),
+                    },
+                )
+                raise
             atomic_write_json(
                 status_path,
                 {
@@ -294,34 +325,34 @@ def run_claude_durable(
             os.fsync(stderr_stream.fileno())
         os.replace(stdout_partial, stdout_path)
         os.replace(stderr_partial, stderr_path)
-        stdout_bytes = stdout_path.read_bytes()
-        stderr_bytes = stderr_path.read_bytes()
-        atomic_write_json(
-            status_path,
-            {
-                "schema_version": 1,
-                "state": "timed_out" if timed_out else "completed",
-                "invocation_digest": invocation_id,
-                "attempt": attempt,
-                "pid": process.pid,
-                "started": started,
-                "finished": _utc_now(),
-                "returncode": returncode,
-                "stdout_bytes": len(stdout_bytes),
-                "stdout_sha256": hashlib.sha256(stdout_bytes).hexdigest(),
-                "stderr_bytes": len(stderr_bytes),
-                "stderr_sha256": hashlib.sha256(stderr_bytes).hexdigest(),
-            },
+    finally:
+        stdout_partial.unlink(missing_ok=True)
+        stderr_partial.unlink(missing_ok=True)
+    stdout_bytes = stdout_path.read_bytes()
+    stderr_bytes = stderr_path.read_bytes()
+    atomic_write_json(
+        status_path,
+        {
+            "schema_version": 1,
+            "state": "timed_out" if timed_out else "completed",
+            "invocation_digest": invocation_id,
+            "attempt": attempt,
+            "pid": process.pid,
+            "started": started,
+            "finished": _utc_now(),
+            "returncode": returncode,
+            "stdout_bytes": len(stdout_bytes),
+            "stdout_sha256": hashlib.sha256(stdout_bytes).hexdigest(),
+            "stderr_bytes": len(stderr_bytes),
+            "stderr_sha256": hashlib.sha256(stderr_bytes).hexdigest(),
+        },
+    )
+    stdout = stdout_bytes.decode("utf-8", errors="replace")
+    stderr = stderr_bytes.decode("utf-8", errors="replace")
+    if timed_out:
+        raise LedgerError(
+            f"Claude Fable invocation timed out after {timeout_seconds} seconds; outcome is "
+            f"uncertain and automatic resubmission is forbidden; durable diagnostics: "
+            f"{transport_dir}"
         )
-        stdout = stdout_bytes.decode("utf-8", errors="replace")
-        stderr = stderr_bytes.decode("utf-8", errors="replace")
-        if not timed_out and returncode == 0:
-            return DurableClaudeResult(returncode, stdout, stderr, False, attempt)
-        if attempt == max_attempts:
-            if timed_out:
-                raise LedgerError(
-                    f"Claude Fable invocation timed out after {timeout_seconds} seconds "
-                    f"for {max_attempts} attempt(s); durable diagnostics: {transport_dir}"
-                )
-            return DurableClaudeResult(returncode, stdout, stderr, False, attempt)
-    raise LedgerError("Claude Fable transport exhausted attempts without a result")
+    return DurableClaudeResult(returncode, stdout, stderr, False, attempt)

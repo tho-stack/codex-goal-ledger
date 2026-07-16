@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import json
 from pathlib import Path
+import re
 from typing import Iterable, Mapping
 
 from generate_closeout_prompts import (
@@ -27,6 +28,7 @@ class ReviewNode:
     state: str
     href: str | None = None
     current: bool = False
+    completed: bool = False
 
 
 @dataclass(frozen=True)
@@ -91,41 +93,74 @@ def _edge_for_state(state: str) -> ReviewEdge:
 
 
 def _fable_nodes(goal_dir: Path, goal: Document, selected: bool) -> list[ReviewNode]:
-    if not selected:
+    configured_round_count = fable_review_rounds(goal)
+    round_numbers = set(range(1, configured_round_count + 1)) if selected else set()
+    if (goal_dir / fable_artifact(1)).is_file():
+        round_numbers.add(1)
+    for path in (goal_dir / "evidence").glob("fable-feedback-round-*.md"):
+        match = re.fullmatch(r"fable-feedback-round-(\d+)\.md", path.name)
+        if match is not None:
+            round_numbers.add(int(match.group(1)))
+    if not round_numbers:
         return []
     nodes: list[ReviewNode] = []
-    round_count = fable_review_rounds(goal)
-    for number in range(1, round_count + 1):
+    display_round_count = max(round_numbers)
+    for number in sorted(round_numbers):
         relative = fable_artifact(number)
         path = goal_dir / relative
         state = "pending"
-        detail = f"Planning peer round {number} of {round_count}"
+        detail = f"Planning peer round {number} of {display_round_count}"
+        href = None
+        completed = False
         try:
-            payload = load_fable_artifact(
-                path, expected_round=number, expected_round_count=round_count
-            )
+            payload = load_fable_artifact(path)
         except Exception:
-            href = None
+            pass
         else:
             verdict = str(payload.get("verdict", "")).upper()
             state = "ready" if verdict == "READY" else "revise"
             detail = f"Fable verdict: {verdict.title()}"
             href = relative.as_posix()
-        nodes.append(ReviewNode(f"fable-{number}", f"Fable R{number}", detail, state, href))
+            completed = (
+                goal_dir / "evidence" / f"fable-round-{number}-reconciliation.md"
+            ).is_file()
+            if completed:
+                detail += " · Reconciled"
+        nodes.append(
+            ReviewNode(
+                f"fable-{number}",
+                f"Fable R{number}",
+                detail,
+                state,
+                href,
+                completed=completed,
+            )
+        )
     return nodes
 
 
 def _pro_nodes(goal_dir: Path, goal: Document, selected: bool, stage: str) -> list[ReviewNode]:
-    if not selected:
+    configured_numbers = {
+        number
+        for configured_stage, number in configured_reviews(goal)
+        if selected and configured_stage == stage
+    }
+    review_root = goal_dir / "evidence" / "pro-review" / stage
+    historic_numbers: set[int] = set()
+    if review_root.is_dir():
+        for path in review_root.glob("round-[0-9][0-9][0-9]"):
+            if path.is_dir() and re.fullmatch(r"round-(\d{3})", path.name):
+                historic_numbers.add(int(path.name.rsplit("-", 1)[-1]))
+    round_numbers = configured_numbers | historic_numbers
+    if not round_numbers:
         return []
     nodes: list[ReviewNode] = []
-    for configured_stage, number in configured_reviews(goal):
-        if configured_stage != stage:
-            continue
+    for number in sorted(round_numbers):
         relative = Path("evidence/pro-review") / stage / f"round-{number:03d}"
         state_value = _safe_json(goal_dir / relative / "state.json")
         status = str(state_value.get("status", "pending")) if state_value else "pending"
         verdict = str(state_value.get("verdict", "")) if state_value else ""
+        completed = status in {"reconciled-signed-off", "reconciled-blocked"}
         state = {
             "reconciled-signed-off": "pass",
             "reconciled-blocked": "blocked",
@@ -136,13 +171,24 @@ def _pro_nodes(goal_dir: Path, goal: Document, selected: bool, stage: str) -> li
             "packet-ready": "pending",
         }.get(status, "pending")
         detail = verdict.title() if verdict else status.replace("-", " ").title()
+        if completed:
+            detail += " · Reconciled"
         href_path = relative / (
             "reconciliation.md"
             if (goal_dir / relative / "reconciliation.md").is_file()
             else "request.md"
         )
         href = href_path.as_posix() if (goal_dir / href_path).is_file() else None
-        nodes.append(ReviewNode(f"pro-{stage}-{number}", f"GPT Pro R{number}", detail, state, href))
+        nodes.append(
+            ReviewNode(
+                f"pro-{stage}-{number}",
+                f"GPT Pro R{number}",
+                detail,
+                state,
+                href,
+                completed=completed,
+            )
+        )
     return nodes
 
 
@@ -203,6 +249,8 @@ def _planning_current_key(
         pending = next((node for node in fable_nodes if node.state == "pending"), None)
         if pending is not None:
             return pending.key
+        if fable_nodes:
+            return fable_nodes[-1].key
 
     active_pro = next((node for node in reversed(pro_nodes) if node.state == "active"), None)
     if active_pro is not None:
@@ -210,6 +258,16 @@ def _planning_current_key(
     pending_pro = next((node for node in pro_nodes if node.state == "pending"), None)
     if pending_pro is not None:
         return pending_pro.key
+    blocked_pro = next(
+        (
+            node
+            for node in reversed(pro_nodes)
+            if node.state == "blocked" and not node.completed
+        ),
+        None,
+    )
+    if blocked_pro is not None:
+        return blocked_pro.key
     if define_phase == "active":
         return "define-gate"
     if build_phase == "active":
@@ -247,7 +305,15 @@ def build_review_lanes(
         build_phase=build_phase,
     )
     if planning_current == "define-gate":
-        planning.append(ReviewNode("define-gate", "Define gate", "Current focus", "active", "#briefing"))
+        planning.append(
+            ReviewNode(
+                "define-gate",
+                "Define gate",
+                "Current focus",
+                "active",
+                "#briefing",
+            )
+        )
     planning.append(
         ReviewNode(
             "build",
@@ -259,10 +325,23 @@ def build_review_lanes(
     )
     planning = _mark_current(planning, planning_current)
 
-    rescue = [ReviewNode("build-rescue", "Build", "Scientific work", build_phase, "#activity")]
-    rescue.extend(_rescue_nodes(goal_dir))
+    rescue_incidents = _rescue_nodes(goal_dir)
+    rescue_build_state = "complete" if rescue_incidents else build_phase
+    rescue = [
+        ReviewNode("build-rescue", "Build", "Scientific work", rescue_build_state, "#activity")
+    ]
+    rescue.extend(rescue_incidents)
     rescue.append(ReviewNode("experiment", "Experiment", "Prediction-bound outcome", "pending", "#activity"))
     rescue.append(ReviewNode("return-build", "Return to build", "Apply verified learning", "pending", "#activity"))
+    active_rescue = next((node for node in rescue_incidents if node.state == "active"), None)
+    rescue_current = (
+        active_rescue.key
+        if active_rescue is not None
+        else "build-rescue"
+        if build_phase == "active" and planning_current is None
+        else None
+    )
+    rescue = _mark_current(rescue, rescue_current)
 
     closeout = [ReviewNode("verify", "Verify", "Evidence gate", "pending", "#activity")]
     closeout.extend(_pro_nodes(goal_dir, goal, pro_selected, "implementation"))
@@ -311,18 +390,32 @@ def progress_tracks(
     reconciled = 0
     lane_nodes = [node for lane in lanes for node in lane.nodes]
     if choices.get(FABLE_FEEDBACK_OPTION) == "yes":
-        fable = [node for node in lane_nodes if node.key.startswith("fable-")]
-        reconciled += int(bool(fable) and fable[-1].state == "ready")
-    if choices.get(PRO_REVIEW_OPTION) == "yes":
-        pro = [node for node in lane_nodes if node.key.startswith("pro-")]
-        latest_by_stage: dict[str, ReviewNode] = {}
-        for node in pro:
-            parts = node.key.split("-")
-            if len(parts) >= 3:
-                latest_by_stage[parts[1]] = node
+        configured_fable_keys = {
+            f"fable-{number}" for number in range(1, fable_review_rounds(goal) + 1)
+        }
+        fable_by_key = {
+            node.key: node for node in lane_nodes if node.key.startswith("fable-")
+        }
         reconciled += int(
-            bool(latest_by_stage)
-            and all(node.state == "pass" for node in latest_by_stage.values())
+            bool(configured_fable_keys)
+            and all(
+                key in fable_by_key and fable_by_key[key].completed
+                for key in configured_fable_keys
+            )
+        )
+    if choices.get(PRO_REVIEW_OPTION) == "yes":
+        configured_pro_keys = {
+            f"pro-{stage}-{number}" for stage, number in configured_reviews(goal)
+        }
+        pro_by_key = {
+            node.key: node for node in lane_nodes if node.key.startswith("pro-")
+        }
+        reconciled += int(
+            bool(configured_pro_keys)
+            and all(
+                key in pro_by_key and pro_by_key[key].completed
+                for key in configured_pro_keys
+            )
         )
     if choices.get(CODEX_REVIEW_OPTION) == "yes":
         codex = next((node for node in lane_nodes if node.key == "codex-review"), None)

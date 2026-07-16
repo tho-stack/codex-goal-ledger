@@ -9,6 +9,8 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -33,6 +35,48 @@ V4_HEADERS = (
     "Effective profile",
     "Evidence",
 )
+
+
+def tmux_capability() -> dict[str, object]:
+    path = shutil.which("tmux")
+    if path is None:
+        return {
+            "available": False,
+            "path": None,
+            "version": None,
+            "problems": [
+                "tmux is not installed or not visible on PATH; long-running detached "
+                "work must not start in a fragile foreground terminal"
+            ],
+        }
+    try:
+        checked = subprocess.run(
+            [path, "-V"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {
+            "available": False,
+            "path": path,
+            "version": None,
+            "problems": [f"tmux version check failed: {exc}"],
+        }
+    version = (checked.stdout or checked.stderr).strip() or None
+    problems = []
+    if checked.returncode != 0:
+        problems.append(
+            f"tmux version check exited with status {checked.returncode}"
+        )
+    return {
+        "available": checked.returncode == 0,
+        "path": path,
+        "version": version,
+        "problems": problems,
+    }
 
 
 def _cell(value: str) -> str:
@@ -135,6 +179,7 @@ def preflight(
         }
     configured = not problems
     review_problems = review_approval_config_problems(codex_home / "config.toml")
+    tmux = tmux_capability()
     selected_names = tuple(
         dict.fromkeys((selected_implementer, *swarm_implementers))
     )
@@ -167,6 +212,7 @@ def preflight(
                 "alone does not prove the current task routes approval to the owner."
             ),
         },
+        "tmux": tmux,
         "note": (
             "Open a new Codex task after installation before changing session_visible to yes. "
             "Configuration and session visibility do not prove a worker's runtime profile."
@@ -202,6 +248,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Fail unless config.toml routes exact external-review escalation to the owner "
             "with approvals_reviewer=\"user\" and approval_policy=\"on-request\"."
+        ),
+    )
+    check.add_argument(
+        "--require-tmux",
+        action="store_true",
+        help=(
+            "Fail unless tmux is installed and runnable. Use before a long-running, "
+            "overnight, monitored, or interruption-sensitive command."
         ),
     )
 
@@ -247,10 +301,20 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 for problem in review["problems"]:
                     print(f"External review problem: {problem}")
+                tmux = result["tmux"]
+                print(
+                    "Tmux available: "
+                    f"{'yes' if tmux['available'] else 'no'}"
+                    + (f" ({tmux['version']}; {tmux['path']})" if tmux["available"] else "")
+                )
+                for problem in tmux["problems"]:
+                    print(f"Tmux problem: {problem}")
                 print(result["note"])
             ready = bool(result["configured"])
             if args.require_external_review_approval:
                 ready = ready and bool(result["external_review_approval"]["configured"])
+            if args.require_tmux:
+                ready = ready and bool(result["tmux"]["available"])
             return 0 if ready else 1
         record_profile(
             args.goal_dir,

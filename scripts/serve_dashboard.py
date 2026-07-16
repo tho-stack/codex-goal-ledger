@@ -22,11 +22,11 @@ from urllib.parse import unquote, urlsplit
 from urllib.request import urlopen
 
 from ledger_common import LedgerError, project_root_for
-from preview_common import preview_state_path
+from preview_common import PREVIEW_HEALTH_PATH, preview_state_path
 from render_goal import build_dashboard
 
 
-HEALTH_PATH = "/__goal_ledger_health__"
+HEALTH_PATH = PREVIEW_HEALTH_PATH
 
 
 def utc_now() -> str:
@@ -262,7 +262,16 @@ def main(argv: list[str] | None = None) -> int:
                     payload = json.load(response)
             except Exception as exc:
                 raise LedgerError(f"preview health check failed for {state.health_url}: {exc}") from exc
-            if response.status != 200 or payload.get("ok") is not True:
+            expected_health = {
+                "ok": True,
+                "goal_slug": goal_dir.name,
+                "transport": state.transport,
+                "url": state.url,
+                "port": state.port,
+            }
+            if response.status != 200 or not isinstance(payload, dict) or any(
+                payload.get(key) != expected for key, expected in expected_health.items()
+            ):
                 raise LedgerError(f"preview health check returned an invalid response: {state.health_url}")
             print(f"Preview is healthy: {state.url}")
             return 0

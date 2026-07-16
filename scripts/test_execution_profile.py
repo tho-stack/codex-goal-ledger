@@ -183,6 +183,49 @@ class ExecutionProfileTests(unittest.TestCase):
         self.assertTrue(payload["external_review_approval"]["configured"])
         self.assertEqual("unconfirmed", payload["external_review_approval"]["session_effective"])
 
+    def test_tmux_preflight_fails_closed_and_records_available_binary(self) -> None:
+        codex_home = self.root / "codex-home-tmux"
+        environment = os.environ.copy()
+        environment["CODEX_HOME"] = str(codex_home)
+        self.run_script("install_skill.py", "--with-agents", env=environment)
+
+        missing_environment = environment.copy()
+        missing_environment["PATH"] = str(self.root / "empty-path")
+        missing = self.run_script(
+            "execution_profile.py",
+            "preflight",
+            "--codex-home",
+            codex_home,
+            "--require-tmux",
+            "--json",
+            expected=1,
+            env=missing_environment,
+        )
+        missing_payload = json.loads(missing.stdout)
+        self.assertFalse(missing_payload["tmux"]["available"])
+        self.assertIn("not installed", "\n".join(missing_payload["tmux"]["problems"]))
+
+        binary_dir = self.root / "fake-bin"
+        binary_dir.mkdir()
+        fake_tmux = binary_dir / "tmux"
+        fake_tmux.write_text("#!/bin/sh\nprintf 'tmux 9.9-test\\n'\n", encoding="utf-8")
+        fake_tmux.chmod(0o755)
+        available_environment = environment.copy()
+        available_environment["PATH"] = str(binary_dir)
+        available = self.run_script(
+            "execution_profile.py",
+            "preflight",
+            "--codex-home",
+            codex_home,
+            "--require-tmux",
+            "--json",
+            env=available_environment,
+        )
+        available_payload = json.loads(available.stdout)
+        self.assertTrue(available_payload["tmux"]["available"])
+        self.assertEqual(str(fake_tmux), available_payload["tmux"]["path"])
+        self.assertEqual("tmux 9.9-test", available_payload["tmux"]["version"])
+
     def test_initializer_derives_requested_profile_from_selected_implementer(self) -> None:
         selected_project = self.root / "selected-project"
         self.run_script(

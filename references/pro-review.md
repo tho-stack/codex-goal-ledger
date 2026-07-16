@@ -6,6 +6,7 @@ Use this reference whenever **GPT Pro review** is selected. Goal Ledger owns the
 
 - [Selection contract](#selection-contract)
 - [Prepare the prompt and ZIP](#prepare-the-prompt-and-zip)
+- [Review directly through the Goal Ledger MCP App](#review-directly-through-the-goal-ledger-mcp-app)
 - [Route and submit through a supported UI](#route-and-submit-through-a-supported-ui)
 - [Capture the complete response](#capture-the-complete-response)
 - [Reconcile](#reconcile)
@@ -20,10 +21,10 @@ Record these values in `goal.md` during the first planning checkpoint:
 - choice: `ask`, `yes`, or `no`;
 - stage: `plan`, `implementation`, or `both`;
 - rounds: 1-3 for every selected stage;
-- delivery: `auto-ui`, `safari-assisted`, `chrome-assisted`, `chatgpt-desktop`, or `owner-handoff`;
+- delivery: `mcp-app`, `auto-ui`, `safari-assisted`, `chrome-assisted`, or `owner-handoff`;
 - gate: `required` or `advisory`.
 
-Recommend one required plan round through `auto-ui` for difficult, ambiguous, scientific, or high-risk work. Recommend `both` only when implementation evidence will materially change the decision. More than one round is useful when a blocked review will be revised and checked again.
+Recommend one required plan round through `mcp-app` when the restricted Goal Ledger app and Secure MCP Tunnel pass preflight; otherwise use `auto-ui`. Recommend `both` only when implementation evidence will materially change the decision. More than one round is useful when a blocked review will be revised and checked again.
 
 A `yes` records specific pre-approval to upload only the generated `request.md` and exact hashed `context-packet.zip` to ChatGPT GPT Pro. The user must see that scope in the planning choice. Do not ask for a ceremonial consent sentence later. Ask again only when the destination changes, the goal scope expands, or files outside the generated manifest would be transmitted.
 
@@ -55,6 +56,7 @@ evidence/pro-review/<stage>/round-NNN/
 ├── packet-manifest.md
 ├── delivery-plan.json
 ├── transport-attempts.json # after the first assisted probe
+├── packet-read-receipts/   # one hash-bound receipt per MCP member read
 ├── manual-handoff.md       # owner delivery or exhausted assisted route
 └── state.json
 ```
@@ -70,16 +72,39 @@ The prompt follows [prompting-gpt-5p6.md](prompting-gpt-5p6.md): role, decision,
 
 Never edit or replace a prepared round after submission. If evidence or the decision changes, increment the round and create a new packet.
 
+## Review directly through the Goal Ledger MCP App
+
+`mcp-app` uses the server and widget shipped inside this skill. It is not DevSpace, a separate plugin dependency, or the external `$pro` skill. Read and follow [review-bridge.md](review-bridge.md).
+
+The app reads only the prepared ZIP and verifies its complete manifest before every member read. It exposes no shell, generic read/write/edit tool, live repository access, or arbitrary output path. Its only write is the normal immutable Pro response and custody metadata for the bound round.
+
+Preflight and print the exact stdio command:
+
+```bash
+python3 scripts/run_review_bridge.py check \
+  --goal-dir docs/goals/<goal-slug> --stage plan --round 1 \
+  --require-tunnel-client
+
+python3 scripts/run_review_bridge.py print-command \
+  --goal-dir docs/goals/<goal-slug> --stage plan --round 1
+```
+
+Run that command through the configured OpenAI Secure MCP Tunnel profile. In a visibly selected GPT Pro or Pro Extended conversation, enable the `Codex Goal Ledger` developer app and call `open_goal_ledger`. The widget records the `mcp-app` ready attempt and submission only after the user confirms the visible Pro label and presses **Begin exact-packet review**. **Ask Pro to review now** posts the packet-reading and response-submission instruction into the same conversation.
+
+GPT Pro must read every listed member, follow `START-HERE.md`, and call `submit_pro_review_response` with its complete answer. Each MCP read writes a deterministic receipt bound to the packet hash, member path, and member hash. The bridge refuses the response until every declared member has a valid receipt. It stores the same `submission.json`, `response.md`, response metadata, state, and later reconciliation used by browser delivery. Stop the round-bound tunnel after the response is stored.
+
+If the bridge is unavailable before submission, record the failed `mcp-app` attempt and use another authorized transport. If `submission.json` already exists, restart only the identical manifest-bound bridge and never submit through another transport.
+
 ## Route and submit through a supported UI
 
-Use the installed Computer Use capability directly. Read its current skill instructions, initialize its supported UI runtime, and operate the selected surface through accessibility state, clicks, typing, screenshots, and fresh state reads. Do not substitute the in-app Browser, Playwright, shell-launched browser automation, `open`, AppleScript, or machine-specific executable paths.
+Use this browser lane when delivery is `auto-ui`, `safari-assisted`, or `chrome-assisted`, or when an authorized MCP attempt failed before submission. Use the installed Computer Use capability directly. Read its current skill instructions, initialize its supported UI runtime, and operate the selected surface through accessibility state, clicks, typing, screenshots, and fresh state reads. Do not substitute the in-app Browser, Playwright, shell-launched browser automation, `open`, AppleScript, or machine-specific executable paths. The built-in Browser is not eligible for this fallback because its documented Computer Use surface cannot automate file uploads.
 
 `auto-ui` uses this order:
 
-- macOS: Safari, Chrome, ChatGPT desktop/classic app, then owner handoff;
-- Windows and Linux: Chrome, ChatGPT desktop/classic app, then owner handoff.
+- macOS: Safari, Chrome, then owner handoff;
+- Windows and Linux: Chrome, then owner handoff.
 
-An explicit `safari-assisted`, `chrome-assisted`, `chatgpt-desktop`, or `owner-handoff` selection wins over automatic routing. A UI surface is ready only when Computer Use can inspect it, ChatGPT is authenticated, GPT Pro or Pro Extended is visibly selectable, and file upload plus text input are available. After every assisted probe, record `unavailable`, `not-authenticated`, `pro-unavailable`, `ready`, or `failed`:
+Do not probe or control the ChatGPT desktop/classic app. Computer Use cannot inspect or operate its own host app under the desktop security boundary, so it is not an assisted transport. An explicit browser or owner-handoff selection wins over automatic browser routing. A browser surface is ready only when Computer Use can inspect it, ChatGPT is authenticated, GPT Pro or Pro Extended is visibly selectable, and file upload plus text input are available. After every assisted probe, record `unavailable`, `not-authenticated`, `pro-unavailable`, `ready`, or `failed`:
 
 ```bash
 python3 scripts/run_pro_review.py record-attempt docs/goals/<goal-slug> \
@@ -95,8 +120,8 @@ The runner enforces candidate order, refuses duplicate probes, stores the observ
 2. Reuse the relevant ChatGPT thread when its context remains clean; otherwise start a new thread.
 3. Verify the visible model picker identifies GPT Pro or Pro Extended. Record the exact visible label. If Pro is unavailable, stop and record the specific blocker.
 4. Attach exactly `context-packet.zip` and paste exactly `request.md`.
-5. Immediately before the upload or send action, follow the current Computer Use confirmation policy. The recorded planning `yes` is pre-approval only for the specific ChatGPT destination and exact generated artifacts; it does not authorize added data.
-6. After the send completes, record the observed submission:
+5. The recorded planning `yes` authorizes automatic upload and submission of the exact generated request and ZIP to ChatGPT Pro. Do not stop for a second prose `Press Send` question. Follow any native Computer Use or platform confirmation that actually appears; it does not authorize added data.
+6. Click Send once, verify the visible control changes to an active-generation state, capture the resulting `chatgpt.com/c/...` URL, and only then record the observed submission:
 
 ```bash
 python3 scripts/run_pro_review.py record-submission docs/goals/<goal-slug> \
@@ -126,7 +151,7 @@ python3 scripts/run_pro_review.py record-response docs/goals/<goal-slug> \
   --response-file /path/to/full-pro-response.md
 ```
 
-The response must begin with `Verdict: SIGNED OFF` or `Verdict: BLOCKED`. The runner copies the exact bytes to `response.md`, records byte count and SHA-256 in `response-metadata.json`, and changes `state.json` to `response-received`.
+The response must begin with `Verdict: SIGNED OFF` or `Verdict: BLOCKED`, then contain exactly one non-empty `Required changes`, `Risks`, `Tests or verification`, and `Reasoning notes` section in that order. The runner copies the exact bytes to `response.md`, records byte count and SHA-256 in `response-metadata.json`, and changes `state.json` to `response-received`.
 
 ## Reconcile
 
@@ -178,8 +203,8 @@ If Pro returns `BLOCKED`, apply only verified, authorized `FIX` items. Resolve `
 
 Read the round's `state.json` before acting:
 
-- `packet-ready`: submit once through the selected delivery lane;
-- `ui-ready`: the recorded assisted surface is ready; submit the prepared request and ZIP once;
+- `packet-ready`: start the selected bridge or probe the selected browser lane once;
+- `ui-ready`: the recorded MCP App or browser surface is ready; submit the prepared packet once;
 - `manual-handoff-ready`: give the owner `manual-handoff.md`, the request, and the exact ZIP without marking the goal blocked merely for awaiting that action;
 - `submitted-waiting-response`: reopen and poll the existing thread; never send again;
 - `response-received`: reconcile the stored full response;

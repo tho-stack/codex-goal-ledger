@@ -777,7 +777,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model", default=os.environ.get("FABLE_MODEL", "claude-fable-5"))
     parser.add_argument("--effort", choices=("high", "xhigh"), default=None)
     parser.add_argument("--timeout-seconds", type=int, default=1800)
-    parser.add_argument("--transport-attempts", type=int, default=2)
+    parser.add_argument(
+        "--transport-attempts",
+        type=int,
+        default=1,
+        help="Compatibility option; must be 1 because automatic resubmission is forbidden.",
+    )
     parser.add_argument("--prepare-transmission", action="store_true")
     parser.add_argument("--approve-transmission", metavar="SHA256")
     parser.add_argument(

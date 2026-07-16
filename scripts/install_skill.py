@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -30,10 +31,35 @@ MULTI_AGENT_SETTINGS = {
     "max_concurrent_threads_per_session": 8,
     "tool_namespace": "agents",
 }
+AGENT_LIMITS_SECTION = "agents"
+AGENT_LIMIT_SETTINGS = {
+    "max_threads": 8,
+    "max_depth": 1,
+}
 REVIEW_APPROVAL_SETTINGS = {
     "approvals_reviewer": "user",
     "approval_policy": "on-request",
 }
+
+
+def _review_bridge_command(destination: Path, *arguments: str) -> list[str]:
+    return [
+        sys.executable,
+        str(destination.expanduser().resolve() / "scripts" / "setup_review_bridge.py"),
+        *arguments,
+    ]
+
+
+def _run_review_bridge_setup(
+    destination: Path, *arguments: str
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        _review_bridge_command(destination, *arguments),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
 
 
 def default_codex_home() -> Path:
@@ -151,6 +177,17 @@ def multi_agent_config_problems(config_path: Path) -> list[str]:
                 f"[{MULTI_AGENT_SECTION}] {key} must be {_toml_scalar(expected)}; "
                 f"found {_toml_scalar(actual) if isinstance(actual, (bool, int, str)) else actual!r}"
             )
+    agent_section = parsed.get(AGENT_LIMITS_SECTION)
+    if not isinstance(agent_section, dict):
+        problems.append(f"missing [{AGENT_LIMITS_SECTION}] in {config_path}")
+        return problems
+    for key, expected in AGENT_LIMIT_SETTINGS.items():
+        actual = agent_section.get(key)
+        if actual != expected or type(actual) is not type(expected):
+            problems.append(
+                f"[{AGENT_LIMITS_SECTION}] {key} must be {_toml_scalar(expected)}; "
+                f"found {_toml_scalar(actual) if isinstance(actual, (bool, int, str)) else actual!r}"
+            )
     return problems
 
 
@@ -229,7 +266,7 @@ def _config_with_multi_agent(config_text: str, config_path: Path, *, replace: bo
         ]
         candidate = (prefix + "\n\n" if prefix else "") + "\n".join(rows) + "\n"
         _validate_toml(candidate, config_path)
-        return candidate
+        return _config_with_agent_limits(candidate, config_path, replace=replace)
     if not replace:
         raise FileExistsError(
             f"[{MULTI_AGENT_SECTION}] differs from the Goal Ledger requirements in "
@@ -246,6 +283,68 @@ def _config_with_multi_agent(config_text: str, config_path: Path, *, replace: bo
             body = pattern.sub(replacement, body, count=1)
         else:
             body = body.rstrip() + "\n" + replacement + "\n"
+    candidate = config_text[: match.end()] + body + config_text[end:]
+    _validate_toml(candidate, config_path)
+    return _config_with_agent_limits(candidate, config_path, replace=replace)
+
+
+def _config_with_agent_limits(
+    config_text: str, config_path: Path, *, replace: bool
+) -> str:
+    """Configure native thread and spawn-depth limits without rewriting roles."""
+    _validate_toml(config_text, config_path)
+    header_pattern = re.compile(r"(?m)^\[agents\][ \t]*$")
+    match = header_pattern.search(config_text)
+    if match is None:
+        rows = ["[agents]"] + [
+            f"{key} = {_toml_scalar(value)}" for key, value in AGENT_LIMIT_SETTINGS.items()
+        ]
+        block = "\n".join(rows) + "\n\n"
+        child = re.search(r"(?m)^\[agents\.[^\n]+\][ \t]*$", config_text)
+        managed = re.search(rf"(?m)^{re.escape(MANAGED_BEGIN)}$", config_text)
+        insertion_points = [
+            match.start() for match in (managed, child) if match is not None
+        ]
+        if insertion_points:
+            insertion = min(insertion_points)
+            candidate = config_text[:insertion] + block + config_text[insertion:]
+        else:
+            prefix = config_text.rstrip()
+            candidate = (prefix + "\n\n" if prefix else "") + block.rstrip() + "\n"
+        _validate_toml(candidate, config_path)
+        return candidate
+
+    next_header = re.search(r"(?m)^\[[^\n]+\][ \t]*$", config_text[match.end() :])
+    end = match.end() + next_header.start() if next_header else len(config_text)
+    body = config_text[match.end() : end]
+    for key, expected in AGENT_LIMIT_SETTINGS.items():
+        pattern = re.compile(rf"(?m)^[ \t]*{re.escape(key)}[ \t]*=[ \t]*(.+?)\s*$")
+        existing = pattern.search(body)
+        replacement = f"{key} = {_toml_scalar(expected)}"
+        if existing:
+            try:
+                actual = tomllib.loads(f"value = {existing.group(1)}\n")["value"]
+            except tomllib.TOMLDecodeError as exc:
+                raise ValueError(f"invalid [{AGENT_LIMITS_SECTION}] {key}: {exc}") from exc
+            if (actual != expected or type(actual) is not type(expected)) and not replace:
+                raise FileExistsError(
+                    f"[{AGENT_LIMITS_SECTION}] {key} differs from the Goal Ledger "
+                    f"requirement in {config_path}; rerun with --replace"
+                )
+            body = pattern.sub(replacement, body, count=1)
+        else:
+            managed = re.search(rf"(?m)^{re.escape(MANAGED_BEGIN)}$", body)
+            if managed:
+                prefix = body[: managed.start()].rstrip()
+                body = (
+                    prefix
+                    + "\n"
+                    + replacement
+                    + "\n\n"
+                    + body[managed.start() :].lstrip("\n")
+                )
+            else:
+                body = body.rstrip() + "\n" + replacement + "\n"
     candidate = config_text[: match.end()] + body + config_text[end:]
     _validate_toml(candidate, config_path)
     return candidate
@@ -461,6 +560,50 @@ def backup_path(destination: Path) -> Path:
     return candidate
 
 
+def skill_backup_root(destination: Path) -> Path:
+    """Keep replaced skills outside every directory Codex scans for skills."""
+    destination = destination.expanduser().resolve()
+    if destination.parent.name == "skills":
+        return destination.parent.parent / "backups" / "skills"
+    return destination.parent / ".skill-backups"
+
+
+def skill_backup_path(destination: Path) -> Path:
+    root = skill_backup_root(destination)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    candidate = root / f"{destination.name}.backup-{timestamp}"
+    suffix = 1
+    while candidate.exists():
+        candidate = root / f"{destination.name}.backup-{timestamp}-{suffix}"
+        suffix += 1
+    return candidate
+
+
+def legacy_skill_backups(destination: Path) -> list[Path]:
+    """Return old sibling backups that Codex may incorrectly discover as skills."""
+    destination = destination.expanduser().resolve()
+    return sorted(destination.parent.glob(f"{destination.name}.backup-*"))
+
+
+def migrate_legacy_skill_backups(destination: Path) -> list[Path]:
+    """Move legacy sibling backups into the non-discoverable skill backup archive."""
+    legacy = legacy_skill_backups(destination)
+    if not legacy:
+        return []
+    root = skill_backup_root(destination)
+    root.mkdir(parents=True, exist_ok=True)
+    migrated: list[Path] = []
+    for source in legacy:
+        target = root / source.name
+        suffix = 1
+        while target.exists():
+            target = root / f"{source.name}-{suffix}"
+            suffix += 1
+        os.replace(source, target)
+        migrated.append(target)
+    return migrated
+
+
 def install(source: Path, destination: Path, *, replace: bool) -> tuple[Path, Path | None]:
     """Install transactionally and preserve a replaced installation as a backup."""
     source = source.resolve()
@@ -478,7 +621,7 @@ def install(source: Path, destination: Path, *, replace: bool) -> tuple[Path, Pa
         if not replace:
             raise FileExistsError(
                 f"{destination} differs from this package; rerun with --replace to preserve "
-                "the existing installation as a sibling backup"
+                "the existing installation in the non-discoverable skill backup archive"
             )
 
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -493,7 +636,8 @@ def install(source: Path, destination: Path, *, replace: bool) -> tuple[Path, Pa
             raise OSError("staged package verification failed: " + "; ".join(staged_problems))
 
         if destination.exists():
-            backup = backup_path(destination)
+            backup = skill_backup_path(destination)
+            backup.parent.mkdir(parents=True, exist_ok=True)
             os.replace(destination, backup)
         try:
             os.replace(staging, destination)
@@ -545,6 +689,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--with-review-bridge",
+        action="store_true",
+        help=(
+            "Also bootstrap or verify the Keychain-backed Secure MCP Tunnel and "
+            "private ChatGPT Goal Ledger app. First-time account UI remains confirmation-gated."
+        ),
+    )
+    parser.add_argument(
+        "--review-bridge-tunnel-id",
+        help="Existing OpenAI tunnel id used by --with-review-bridge bootstrap.",
+    )
+    parser.add_argument(
+        "--review-bridge-key-from-clipboard",
+        action="store_true",
+        help=(
+            "On macOS, store the already-approved one-time runtime key from the clipboard "
+            "in Keychain and clear the clipboard."
+        ),
+    )
+    parser.add_argument(
+        "--review-bridge-connector-id",
+        help=(
+            "Record a visibly verified ChatGPT connector id after the private app is connected."
+        ),
+    )
+    parser.add_argument(
         "--uninstall-agents",
         action="store_true",
         help="Remove only Goal Ledger-owned agent profiles and their managed config block.",
@@ -562,10 +732,15 @@ def main(argv: list[str] | None = None) -> int:
     destination = args.destination or default_destination()
     try:
         if args.uninstall_agents:
-            if args.check or args.with_agents or args.configure_review_approvals:
+            if (
+                args.check
+                or args.with_agents
+                or args.configure_review_approvals
+                or args.with_review_bridge
+            ):
                 raise ValueError(
                     "--uninstall-agents cannot be combined with --check, --with-agents, "
-                    "or --configure-review-approvals"
+                    "--configure-review-approvals, or --with-review-bridge"
                 )
             removed = uninstall_agent_profiles(
                 default_codex_home(), force=args.force_agent_uninstall
@@ -577,14 +752,43 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.force_agent_uninstall:
             raise ValueError("--force-agent-uninstall requires --uninstall-agents")
+        if (
+            args.review_bridge_tunnel_id
+            or args.review_bridge_key_from_clipboard
+            or args.review_bridge_connector_id
+        ) and not args.with_review_bridge:
+            raise ValueError("review-bridge setup options require --with-review-bridge")
+        if (
+            args.review_bridge_key_from_clipboard or args.review_bridge_connector_id
+        ) and not args.review_bridge_tunnel_id:
+            raise ValueError(
+                "--review-bridge-key-from-clipboard and --review-bridge-connector-id "
+                "require --review-bridge-tunnel-id"
+            )
         if args.check:
             problems = installation_problems(PACKAGE_ROOT, destination.expanduser().resolve())
+            for legacy in legacy_skill_backups(destination):
+                problems.append(
+                    f"legacy discoverable skill backup must be migrated: {legacy}; "
+                    "rerun the installer without --check"
+                )
             if args.with_agents:
                 problems.extend(agent_installation_problems(default_codex_home()))
             if args.configure_review_approvals:
                 problems.extend(
                     review_approval_config_problems(default_codex_home() / "config.toml")
                 )
+            if args.with_review_bridge and not problems:
+                bridge = _run_review_bridge_setup(
+                    destination, "check", "--require-chatgpt-app"
+                )
+                if bridge.returncode:
+                    diagnostics = bridge.stderr.strip() or bridge.stdout.strip()
+                    problems.extend(
+                        line.removeprefix("error: ")
+                        for line in diagnostics.splitlines()
+                        if line.strip()
+                    )
             if problems:
                 for problem in problems:
                     print(f"error: {problem}", file=sys.stderr)
@@ -594,12 +798,15 @@ def main(argv: list[str] | None = None) -> int:
                 print("Goal Ledger agent profiles and registrations are current.")
             if args.configure_review_approvals:
                 print("External-review owner approval configuration is current.")
+            if args.with_review_bridge:
+                print("Goal Ledger review bridge installation is current and ready.")
             return 0
 
         if args.with_agents:
             # Fail on config/profile drift before replacing an otherwise installable skill.
             validate_agent_install(default_codex_home(), replace=args.replace)
         installed, backup = install(PACKAGE_ROOT, destination, replace=args.replace)
+        migrated_skill_backups = migrate_legacy_skill_backups(destination)
         agent_changes = (
             install_agent_profiles(default_codex_home(), replace=args.replace)
             if args.with_agents
@@ -610,6 +817,67 @@ def main(argv: list[str] | None = None) -> int:
             if args.configure_review_approvals
             else []
         )
+        review_bridge_messages: list[str] = []
+        if args.with_review_bridge:
+            if args.review_bridge_tunnel_id:
+                bootstrap_arguments = [
+                    "bootstrap",
+                    "--tunnel-id",
+                    args.review_bridge_tunnel_id,
+                ]
+                if args.review_bridge_key_from_clipboard:
+                    bootstrap_arguments.append("--key-from-clipboard")
+                if args.replace:
+                    bootstrap_arguments.append("--replace-profile")
+                bootstrap = _run_review_bridge_setup(
+                    installed, *bootstrap_arguments
+                )
+                if bootstrap.returncode:
+                    raise ValueError(
+                        bootstrap.stderr.strip()
+                        or bootstrap.stdout.strip()
+                        or "review bridge bootstrap failed"
+                    )
+                review_bridge_messages.extend(
+                    line for line in bootstrap.stdout.splitlines() if line.strip()
+                )
+                if args.review_bridge_connector_id:
+                    recorded = _run_review_bridge_setup(
+                        installed,
+                        "record-chatgpt-app",
+                        "--tunnel-id",
+                        args.review_bridge_tunnel_id,
+                        "--connector-id",
+                        args.review_bridge_connector_id,
+                    )
+                    if recorded.returncode:
+                        raise ValueError(
+                            recorded.stderr.strip()
+                            or recorded.stdout.strip()
+                            or "review bridge app record failed"
+                        )
+                    review_bridge_messages.extend(
+                        line for line in recorded.stdout.splitlines() if line.strip()
+                    )
+            else:
+                checked = _run_review_bridge_setup(
+                    installed, "check", "--require-chatgpt-app"
+                )
+                if checked.returncode == 0:
+                    review_bridge_messages.append(
+                        "Existing Goal Ledger review bridge is installed, connected, and ready."
+                    )
+                else:
+                    review_bridge_messages.extend(
+                        (
+                            "Review bridge account setup is pending; Codex must now follow "
+                            f"{installed / 'references' / 'review-bridge.md'} using Safari, "
+                            "then Chrome, and request the required action-time confirmations.",
+                            "After the tunnel and Tunnels-only key exist, rerun with "
+                            "--with-review-bridge --review-bridge-tunnel-id <tunnel_...> "
+                            "--review-bridge-key-from-clipboard.",
+                        )
+                    )
     except (FileExistsError, FileNotFoundError, OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -623,6 +891,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Agent install change: {path}")
     for path in review_approval_changes:
         print(f"Review approval config change: {path}")
+    for path in migrated_skill_backups:
+        print(f"Migrated legacy skill backup: {path}")
+    for message in review_bridge_messages:
+        print(f"Review bridge: {message}")
     if args.with_agents or review_approval_changes:
         print(
             "Restart Codex or open a new task before checking session-visible agent roles "

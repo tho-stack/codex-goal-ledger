@@ -33,17 +33,20 @@ from ledger_common import (
 
 PRO_REVIEW_OPTION = "GPT Pro review"
 PRO_REVIEW_ROOT = Path("evidence/pro-review")
+MCP_READ_RECEIPTS_ROOT = Path("packet-read-receipts")
 VALID_STAGES = ("plan", "implementation")
 VALID_STAGE_SELECTIONS = ("plan", "implementation", "both")
 VALID_DELIVERIES = (
     "auto-ui",
+    "mcp-app",
     "safari-assisted",
     "chrome-assisted",
-    "chatgpt-desktop",
     "owner-handoff",
 )
-ASSISTED_SURFACES = ("safari-assisted", "chrome-assisted", "chatgpt-desktop")
+ASSISTED_SURFACES = ("mcp-app", "safari-assisted", "chrome-assisted")
 SUBMISSION_TRANSPORTS = ASSISTED_SURFACES + ("owner-handoff",)
+LEGACY_EVIDENCE_TRANSPORTS = ("chatgpt-desktop",)
+EVIDENCE_TRANSPORTS = SUBMISSION_TRANSPORTS + LEGACY_EVIDENCE_TRANSPORTS
 TRANSPORT_RESULTS = (
     "unavailable",
     "not-authenticated",
@@ -53,6 +56,12 @@ TRANSPORT_RESULTS = (
 )
 VALID_GATES = ("required", "advisory")
 VALID_CLASSIFICATIONS = ("FIX", "DEFER", "DISMISS", "QUESTION")
+RESPONSE_SECTIONS = (
+    "Required changes",
+    "Risks",
+    "Tests or verification",
+    "Reasoning notes",
+)
 MAX_PRO_ROUNDS = 3
 MAX_CONTEXT_FILE_BYTES = 8 * 1024 * 1024
 MAX_PACKET_BYTES = 32 * 1024 * 1024
@@ -148,11 +157,11 @@ def pro_review_stage(goal: Document) -> str:
 
 
 def pro_review_delivery(goal: Document) -> str:
-    delivery = goal.metadata.get("pro_review_delivery", "safari-assisted").strip()
+    delivery = goal.metadata.get("pro_review_delivery", "auto-ui").strip()
     if delivery not in VALID_DELIVERIES:
         raise LedgerError(
-            "pro_review_delivery must be auto-ui, safari-assisted, chrome-assisted, "
-            "chatgpt-desktop, or owner-handoff"
+            "pro_review_delivery must be auto-ui, mcp-app, safari-assisted, "
+            "chrome-assisted, or owner-handoff"
         )
     return delivery
 
@@ -163,23 +172,54 @@ def delivery_candidates(delivery: str, host_platform: str | None = None) -> tupl
         return (delivery,)
     system = (host_platform or platform.system()).strip().casefold()
     if system in {"darwin", "mac", "macos"}:
-        return ("safari-assisted", "chrome-assisted", "chatgpt-desktop", "owner-handoff")
-    return ("chrome-assisted", "chatgpt-desktop", "owner-handoff")
+        return ("safari-assisted", "chrome-assisted", "owner-handoff")
+    return ("chrome-assisted", "owner-handoff")
 
 
 def _delivery_plan(goal: Document) -> dict[str, Any]:
     configured = pro_review_delivery(goal)
     return {
-        "schema_version": 1,
+        "schema_version": 3,
         "configured_delivery": configured,
         "host_platform": platform.system() or "unknown",
         "candidates": list(delivery_candidates(configured)),
-        "readiness_contract": [
-            "Computer Use can inspect the surface.",
-            "ChatGPT is authenticated.",
-            "GPT Pro or Pro Extended is visibly selectable.",
-            "File upload and text input are available.",
-        ],
+        "transport_drivers": {
+            "mcp-app": "goal-ledger-restricted-mcp-app",
+            "browser": "computer-use-mcp",
+        },
+        "automatic_submission": True,
+        "submission_authority": (
+            "Recorded GPT Pro yes authorizes the exact generated request and hashed ZIP; "
+            "native Computer Use and platform confirmations remain binding."
+        ),
+        "excluded_surfaces": {
+            "chatgpt-desktop": (
+                "Computer Use cannot safely inspect or operate its own ChatGPT desktop host."
+            ),
+            "in-app-browser": (
+                "The built-in Browser cannot automate the required ZIP file upload."
+            ),
+        },
+        "mcp_app_contract": {
+            "packet_source": "immutable-context-packet-zip",
+            "live_repository_access": False,
+            "shell_access": False,
+            "arbitrary_write_access": False,
+            "response_sink": "immutable-response.md",
+        },
+        "readiness_contracts": {
+            "mcp-app": [
+                "The manifest-bound local MCP server passes its integrity preflight.",
+                "The Secure MCP Tunnel and ChatGPT developer-mode app are connected.",
+                "The owner confirms a visible GPT Pro or Pro Extended mode in the app control.",
+            ],
+            "browser": [
+                "Computer Use can inspect the surface.",
+                "ChatGPT is authenticated.",
+                "GPT Pro or Pro Extended is visibly selectable.",
+                "File upload and text input are available.",
+            ],
+        },
         "attempt_results": list(TRANSPORT_RESULTS),
     }
 
@@ -653,7 +693,7 @@ def record_transport_attempt(
     goal_dir, goal = _load_selected(goal_dir)
     _validate_review_selection(goal, stage, round_number)
     if surface not in ASSISTED_SURFACES:
-        raise LedgerError("surface must be safari-assisted, chrome-assisted, or chatgpt-desktop")
+        raise LedgerError("surface must be mcp-app, safari-assisted, or chrome-assisted")
     if result not in TRANSPORT_RESULTS:
         raise LedgerError("result must be " + ", ".join(TRANSPORT_RESULTS))
     detail = _single_line("attempt detail", detail)
@@ -754,14 +794,17 @@ def record_submission(
         )
     if transport not in SUBMISSION_TRANSPORTS:
         raise LedgerError(
-            "transport must be safari-assisted, chrome-assisted, chatgpt-desktop, or owner-handoff"
+            "transport must be mcp-app, safari-assisted, chrome-assisted, or owner-handoff"
         )
     configured = pro_review_delivery(goal)
-    if configured != "auto-ui" and transport != configured:
+    round_dir = _review_dir(goal_dir, stage, round_number)
+    exhausted_to_owner = (
+        transport == "owner-handoff" and (round_dir / "manual-handoff.md").is_file()
+    )
+    if configured != "auto-ui" and transport != configured and not exhausted_to_owner:
         raise LedgerError(
             f"recorded transport {transport!r} does not match configured delivery {configured!r}"
         )
-    round_dir = _review_dir(goal_dir, stage, round_number)
     manifest = _load_manifest(round_dir)
     packet = (round_dir / "context-packet.zip").read_bytes()
     if _sha(packet) != manifest.get("archive_sha256"):
@@ -821,30 +864,151 @@ def record_submission(
 
 
 def _response_verdict(text: str) -> str:
-    match = re.match(r"\ufeff?\s*Verdict:\s*(SIGNED OFF|BLOCKED)\s*$", text, re.MULTILINE)
+    match = re.match(
+        r"\ufeff?[ \t]*Verdict:[ \t]*(SIGNED OFF|BLOCKED)[ \t]*(?:\r?\n|$)", text
+    )
     if not match:
         raise LedgerError("Pro response must begin with Verdict: SIGNED OFF or Verdict: BLOCKED")
     return match.group(1)
 
 
-def record_response(
+def _validated_response_verdict(text: str) -> str:
+    verdict = _response_verdict(text)
+    heading_pattern = re.compile(
+        r"(?m)^(Required changes|Risks|Tests or verification|Reasoning notes):[ \t]*$"
+    )
+    matches = list(heading_pattern.finditer(text))
+    headings = tuple(match.group(1) for match in matches)
+    if headings != RESPONSE_SECTIONS:
+        raise LedgerError(
+            "Pro response must contain exactly these sections in order: "
+            + "; ".join(RESPONSE_SECTIONS)
+        )
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        if not text[match.end() : end].strip():
+            raise LedgerError(f"Pro response section {match.group(1)!r} must not be empty")
+    return verdict
+
+
+def _mcp_receipt_path(round_dir: Path, member_path: str) -> Path:
+    name = _sha(member_path.encode("utf-8")) + ".json"
+    return round_dir / MCP_READ_RECEIPTS_ROOT / name
+
+
+def record_mcp_member_read(
+    round_dir: Path,
+    *,
+    packet_sha256: str,
+    member_path: str,
+    member_sha256: str,
+) -> Path:
+    """Record one deterministic, packet-bound MCP member read receipt."""
+    manifest = _load_manifest(round_dir)
+    if manifest.get("archive_sha256") != packet_sha256:
+        raise LedgerError("MCP read receipt packet hash does not match the prepared manifest")
+    declared = {
+        item.get("path"): item
+        for item in manifest.get("zip_members", [])
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    }
+    expected = declared.get(member_path)
+    if expected is None or expected.get("sha256") != member_sha256:
+        raise LedgerError("MCP read receipt does not match a declared packet member")
+    receipt = {
+        "schema_version": 1,
+        "packet_sha256": packet_sha256,
+        "member_path": member_path,
+        "member_sha256": member_sha256,
+    }
+    path = _mcp_receipt_path(round_dir, member_path)
+    _write_immutable(path, _canonical_json(receipt))
+    return path
+
+
+def mcp_read_receipt_problems(round_dir: Path, manifest: Mapping[str, Any]) -> list[str]:
+    declared = manifest.get("zip_members")
+    if not isinstance(declared, list):
+        return ["Pro packet manifest zip_members must be a list before MCP read validation"]
+    expected: dict[str, dict[str, Any]] = {}
+    problems: list[str] = []
+    for item in declared:
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            problems.append("Pro packet manifest contains an invalid MCP-readable member")
+            continue
+        expected[item["path"]] = item
+    receipt_root = round_dir / MCP_READ_RECEIPTS_ROOT
+    expected_files = {_mcp_receipt_path(round_dir, path) for path in expected}
+    actual_files = set(receipt_root.glob("*.json")) if receipt_root.is_dir() else set()
+    if actual_files - expected_files:
+        problems.append("MCP packet read receipts contain an unknown member receipt")
+    for member_path, item in expected.items():
+        receipt_path = _mcp_receipt_path(round_dir, member_path)
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            problems.append(f"MCP Pro review did not read packet member: {member_path}")
+            continue
+        except (OSError, json.JSONDecodeError) as exc:
+            problems.append(f"invalid MCP read receipt for {member_path}: {exc}")
+            continue
+        expected_receipt = {
+            "schema_version": 1,
+            "packet_sha256": manifest.get("archive_sha256"),
+            "member_path": member_path,
+            "member_sha256": item.get("sha256"),
+        }
+        if receipt != expected_receipt:
+            problems.append(f"MCP read receipt does not match packet member: {member_path}")
+    return problems
+
+
+def mcp_read_progress(round_dir: Path) -> dict[str, Any]:
+    manifest = _load_manifest(round_dir)
+    declared = manifest.get("zip_members", [])
+    member_paths = [
+        item["path"]
+        for item in declared
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    ]
+    read = [path for path in member_paths if _mcp_receipt_path(round_dir, path).is_file()]
+    return {
+        "read": len(read),
+        "total": len(member_paths),
+        "missing": [path for path in member_paths if path not in read],
+    }
+
+
+def record_response_bytes(
     goal_dir: Path,
     *,
     stage: str,
     round_number: int,
-    response_file: Path,
+    raw: bytes,
 ) -> tuple[Path, str]:
+    """Record one immutable UTF-8 Pro response from any authorized transport."""
     goal_dir, goal = _load_selected(goal_dir)
     _validate_review_selection(goal, stage, round_number)
     round_dir = _review_dir(goal_dir, stage, round_number)
-    if not (round_dir / "submission.json").is_file():
+    submission_path = round_dir / "submission.json"
+    if not submission_path.is_file():
         raise LedgerError("record the actual Pro submission before recording its response")
-    raw = response_file.expanduser().read_bytes()
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise LedgerError("Pro response must be UTF-8 text") from exc
-    verdict = _response_verdict(text)
+    verdict = _validated_response_verdict(text)
+    try:
+        submission = json.loads(submission_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise LedgerError(f"invalid Pro submission custody: {submission_path}: {exc}") from exc
+    if not isinstance(submission, dict):
+        raise LedgerError("Pro submission custody must be a JSON object")
+    manifest = _load_manifest(round_dir)
+    if submission.get("transport") == "mcp-app":
+        receipt_problems = mcp_read_receipt_problems(round_dir, manifest)
+        if receipt_problems:
+            raise LedgerError("; ".join(receipt_problems))
     response_path = round_dir / "response.md"
     _write_immutable(response_path, raw)
     metadata = {
@@ -861,7 +1025,6 @@ def record_response(
         existing = json.loads(metadata_path.read_text(encoding="utf-8"))
         if existing.get("bytes") != len(raw) or existing.get("sha256") != _sha(raw) or existing.get("verdict") != verdict:
             raise LedgerError("stored Pro response metadata conflicts with the raw response")
-    manifest = _load_manifest(round_dir)
     _atomic_write(
         round_dir / "state.json",
         _state_bytes(
@@ -875,6 +1038,21 @@ def record_response(
         ),
     )
     return response_path, verdict
+
+
+def record_response(
+    goal_dir: Path,
+    *,
+    stage: str,
+    round_number: int,
+    response_file: Path,
+) -> tuple[Path, str]:
+    return record_response_bytes(
+        goal_dir,
+        stage=stage,
+        round_number=round_number,
+        raw=response_file.expanduser().read_bytes(),
+    )
 
 
 def _string_list(name: str, value: Any) -> list[str]:
@@ -964,7 +1142,7 @@ def record_reconciliation(
     _validate_review_selection(goal, stage, round_number)
     round_dir = _review_dir(goal_dir, stage, round_number)
     response = (round_dir / "response.md").read_bytes()
-    verdict = _response_verdict(response.decode("utf-8"))
+    verdict = _validated_response_verdict(response.decode("utf-8"))
     try:
         value = json.loads(reconciliation_file.expanduser().read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -1082,7 +1260,7 @@ def _review_problems(round_dir: Path, *, require_closed: bool) -> list[str]:
         if delivery_plan is not None:
             candidates = delivery_plan.get("candidates")
             if not isinstance(candidates, list) or not candidates or any(
-                candidate not in SUBMISSION_TRANSPORTS for candidate in candidates
+                candidate not in EVIDENCE_TRANSPORTS for candidate in candidates
             ):
                 problems.append("Pro delivery plan has invalid candidates")
 
@@ -1100,7 +1278,7 @@ def _review_problems(round_dir: Path, *, require_closed: bool) -> list[str]:
                         problems.append("Pro transport attempt must be an object")
                         continue
                     surface = item.get("surface")
-                    if surface not in ASSISTED_SURFACES or surface in seen:
+                    if surface not in ASSISTED_SURFACES + LEGACY_EVIDENCE_TRANSPORTS or surface in seen:
                         problems.append("Pro transport attempts contain an invalid or duplicate surface")
                     seen.add(str(surface))
                     if item.get("result") not in TRANSPORT_RESULTS:
@@ -1112,7 +1290,7 @@ def _review_problems(round_dir: Path, *, require_closed: bool) -> list[str]:
             problems.append("Pro submission packet hash does not match manifest")
         if "pro" not in str(submission.get("model_visible", "")).casefold():
             problems.append("Pro submission does not record a visible Pro model")
-        if submission.get("transport") not in SUBMISSION_TRANSPORTS:
+        if submission.get("transport") not in EVIDENCE_TRANSPORTS:
             problems.append("Pro submission has an invalid transport")
 
     response_path = round_dir / "response.md"
@@ -1126,7 +1304,7 @@ def _review_problems(round_dir: Path, *, require_closed: bool) -> list[str]:
     if response_path.is_file():
         response = response_path.read_bytes()
         try:
-            verdict = _response_verdict(response.decode("utf-8"))
+            verdict = _validated_response_verdict(response.decode("utf-8"))
         except (UnicodeDecodeError, LedgerError) as exc:
             problems.append(f"invalid raw Pro response: {exc}")
         if response_metadata is not None:
@@ -1136,6 +1314,13 @@ def _review_problems(round_dir: Path, *, require_closed: bool) -> list[str]:
                 problems.append("Pro response metadata byte count does not match raw response")
             if verdict and response_metadata.get("verdict") != verdict:
                 problems.append("Pro response metadata verdict does not match raw response")
+    if (
+        submission is not None
+        and submission.get("transport") == "mcp-app"
+        and manifest is not None
+        and (require_closed or response is not None)
+    ):
+        problems.extend(mcp_read_receipt_problems(round_dir, manifest))
 
     reconciliation = None
     if require_closed or (round_dir / "reconciliation.json").exists() or (round_dir / "reconciliation.md").exists():

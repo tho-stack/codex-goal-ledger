@@ -12,7 +12,7 @@ The canonical templates are shipped in `assets/templates/goal.md` and `assets/te
 - `updated`
 - `mode`
 - `fable_review_rounds` (1-10; defaults to 1 for legacy ledgers)
-- `pro_review_rounds` (1-3), `pro_review_stage`, `pro_review_delivery`, and `pro_review_gate` for ledger v6-v7; v7 defaults delivery to `auto-ui`
+- `pro_review_rounds` (1-3), `pro_review_stage`, `pro_review_delivery`, and `pro_review_gate` for ledger v6-v7; v7 defaults delivery to `auto-ui` and accepts the bundled `mcp-app` when its runtime and tunnel preflight pass
 - `allowed_skipped_phases`
 - `allowed_skipped_verifications`
 
@@ -40,7 +40,7 @@ Closeout options:
 Option | Choice | Artifact or action
 Claude Fable peer feedback | ask, yes, or no | Run configured critique and feature/science proposal rounds; save one evidence artifact per round.
 Claude Fable scientific rescue | ask, yes, or no | Arm bounded scientific rescue under its incident contract.
-GPT Pro review | ask, yes, or no | Run native prompt-plus-ZIP Pro review with full response custody and reconciliation.
+GPT Pro review | ask, yes, or no | Run Goal Ledger's native immutable-packet Pro review through the restricted MCP App or its browser/owner fallback, with full response custody and reconciliation.
 External LLM review prompt | ask, yes, or no | Generate review-prompt.md for Claude or another independent LLM.
 Additional Codex review | ask, yes, or no | Run the optional $codex-review closeout contract and record its evidence.
 Clean-session handoff prompt | ask, yes, or no | Generate handoff-prompt.md for a new GPT session.
@@ -56,7 +56,7 @@ The row labels and order are canonical. `scripts/generate_closeout_prompts.py` c
 - `execution_health`
 - `updated`
 
-Required sections: At a glance, Phase tracker, Current focus, Work log, Decision log, Verification, Custody, Open gates, Recovery capsule, and Next action.
+Required sections: At a glance, Phase tracker, Current focus, Work log, Decision log, Verification, Custody, Open gates, Recovery capsule, and Next action. New ledgers also include **Parallel workstreams**; legacy ledgers may add it during their next material planning revision.
 
 The v4 progress template includes an `HTTP dashboard preview` Verification row. Resolve it with the served URL, health-check evidence, verified page DOM, and visible same-task in-app Browser deliverable. Never replace it with a direct local-file, external-browser, or hidden-tab claim.
 
@@ -73,6 +73,16 @@ Phase tracker:
 ```text
 Phase | State | Evidence | Next gate
 ```
+
+The Phase tracker has at most one active primary milestone. It is not a mutex over execution. Record concurrently active lanes in **Parallel workstreams** and Custody.
+
+Parallel workstreams:
+
+```text
+Workstream | Deliverable | Blocked by | Mutation class | State | Evidence
+```
+
+Use `none` only when the lane is genuinely ready. Split research from implementation, live operation, and purchasing when their dependencies differ. Start all authorized dependency-free lanes within an explicit slot budget; reserve capacity for the root, active supervisors, and required reviewers. A delegated lane may recursively fan out only when those descendant slots and ownership boundaries were allocated in advance. Reconcile every started or interrupted descendant before closing its parent. A blocked lane does not justify idling independent work.
 
 Decision log:
 

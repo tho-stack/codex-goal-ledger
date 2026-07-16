@@ -93,13 +93,35 @@ class InstallerTests(unittest.TestCase):
             (SCRIPT_DIR.parent / "SKILL.md").read_bytes(),
             skill.read_bytes(),
         )
-        backups = list(self.root.glob("custom-skill.backup-*"))
+        backups = list((self.root / ".skill-backups").glob("custom-skill.backup-*"))
         self.assertEqual(1, len(backups))
         self.assertEqual(
             "local customization\n",
             (backups[0] / "SKILL.md").read_text(encoding="utf-8"),
         )
         self.run_installer("--destination", destination, "--check")
+
+    def test_default_replace_and_legacy_migration_stay_outside_skill_discovery(self) -> None:
+        codex_home = self.root / "codex-home-backups"
+        destination = codex_home / "skills" / "codex-goal-ledger"
+        self.run_installer(codex_home=codex_home)
+        (destination / "SKILL.md").write_text("drifted\n", encoding="utf-8")
+
+        replaced = self.run_installer("--replace", codex_home=codex_home)
+        self.assertIn("Preserved previous installation", replaced.stdout)
+        archive = codex_home / "backups" / "skills"
+        self.assertEqual(1, len(list(archive.glob("codex-goal-ledger.backup-*"))))
+        self.assertEqual([], list((codex_home / "skills").glob("codex-goal-ledger.backup-*")))
+
+        legacy = codex_home / "skills" / "codex-goal-ledger.backup-legacy"
+        legacy.mkdir()
+        (legacy / "SKILL.md").write_text("legacy\n", encoding="utf-8")
+        checked = self.run_installer("--check", codex_home=codex_home, expected=1)
+        self.assertIn("legacy discoverable skill backup", checked.stderr)
+        migrated = self.run_installer(codex_home=codex_home)
+        self.assertIn("Migrated legacy skill backup", migrated.stdout)
+        self.assertFalse(legacy.exists())
+        self.assertTrue((archive / legacy.name / "SKILL.md").is_file())
 
     def test_owned_agents_install_check_and_uninstall_without_touching_other_agents(self) -> None:
         codex_home = self.root / "codex-home-agents"
@@ -124,6 +146,8 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("hide_spawn_agent_metadata = false", installed_config)
         self.assertIn("max_concurrent_threads_per_session = 8", installed_config)
         self.assertIn('tool_namespace = "agents"', installed_config)
+        self.assertIn("max_threads = 8", installed_config)
+        self.assertIn("max_depth = 1", installed_config)
 
         checked = self.run_installer(
             "--check", "--with-agents", codex_home=codex_home
@@ -137,6 +161,7 @@ class InstallerTests(unittest.TestCase):
         self.assertNotIn("goal-ledger-implementer", text)
         self.assertNotIn("goal-ledger-reviewer", text)
         self.assertIn('[agents]\nmax_threads = 8', text)
+        self.assertIn("max_depth = 1", text)
         self.assertIn("[features.multi_agent_v2]", text)
 
     def test_multi_agent_v2_drift_requires_replace_and_preflight_sees_it(self) -> None:
@@ -160,7 +185,25 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("hide_spawn_agent_metadata = false", text)
         self.assertIn("max_concurrent_threads_per_session = 8", text)
         self.assertIn('tool_namespace = "agents"', text)
+        self.assertIn("[agents]", text)
+        self.assertIn("max_threads = 8", text)
+        self.assertIn("max_depth = 1", text)
         self.run_installer("--check", "--with-agents", codex_home=codex_home)
+
+    def test_native_agent_depth_drift_requires_replace(self) -> None:
+        codex_home = self.root / "codex-home-agent-depth"
+        codex_home.mkdir(parents=True)
+        config = codex_home / "config.toml"
+        config.write_text(
+            "[agents]\nmax_threads = 8\nmax_depth = 3\n",
+            encoding="utf-8",
+        )
+        refused = self.run_installer("--with-agents", codex_home=codex_home, expected=1)
+        self.assertIn("max_depth", refused.stderr)
+        self.run_installer("--with-agents", "--replace", codex_home=codex_home)
+        text = config.read_text(encoding="utf-8")
+        self.assertIn("max_threads = 8", text)
+        self.assertIn("max_depth = 1", text)
 
     def test_review_approval_configuration_is_explicit_backed_up_and_checkable(self) -> None:
         codex_home = self.root / "codex-home-review-approval"
@@ -215,6 +258,26 @@ class InstallerTests(unittest.TestCase):
         )
         self.assertIn('root approvals_reviewer must be "user"', checked.stderr)
         self.assertIn('root approval_policy must be "on-request"', checked.stderr)
+
+    def test_review_bridge_setup_values_require_the_explicit_install_lane(self) -> None:
+        codex_home = self.root / "codex-home-review-bridge-options"
+        refused = self.run_installer(
+            "--review-bridge-tunnel-id",
+            "tunnel_0123456789abcdef",
+            codex_home=codex_home,
+            expected=1,
+        )
+        self.assertIn(
+            "review-bridge setup options require --with-review-bridge",
+            refused.stderr,
+        )
+        refused = self.run_installer(
+            "--with-review-bridge",
+            "--review-bridge-key-from-clipboard",
+            codex_home=codex_home,
+            expected=1,
+        )
+        self.assertIn("require --review-bridge-tunnel-id", refused.stderr)
 
     def test_owned_agent_drift_requires_explicit_replace_or_forced_uninstall(self) -> None:
         codex_home = self.root / "codex-home-agent-drift"

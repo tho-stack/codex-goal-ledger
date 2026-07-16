@@ -4,14 +4,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ipaddress
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from ledger_common import LedgerError
 
 
 PREVIEW_STATE_PATH = Path("evidence/preview-server.json")
+PREVIEW_HEALTH_PATH = "/__goal_ledger_health__"
 PREVIEW_STATES = {"starting", "running", "stopped", "failed", "stale"}
 PREVIEW_TRANSPORTS = {"tailscale", "localhost"}
 
@@ -78,8 +81,32 @@ def load_preview_state(goal_dir: Path) -> PreviewState | None:
     for key in required - {"port", "pid"}:
         if not isinstance(value[key], str):
             raise LedgerError(f"preview state field {key} must be a string: {path}")
-    if not value["url"].startswith("http://") or value["url"].startswith("file://"):
-        raise LedgerError(f"preview state URL must use HTTP: {path}")
-    if not value["health_url"].startswith("http://"):
-        raise LedgerError(f"preview health URL must use HTTP: {path}")
+    bind_host = value["bind_host"]
+    display_host = value["display_host"]
+    transport = value["transport"]
+    try:
+        bind_address = ipaddress.ip_address(bind_host)
+    except ValueError as exc:
+        raise LedgerError(f"preview state bind_host must be an IP address: {path}") from exc
+    if bind_address.version != 4:
+        raise LedgerError(f"preview state bind_host must be IPv4: {path}")
+    if transport == "localhost":
+        if bind_host != "127.0.0.1" or display_host != "127.0.0.1":
+            raise LedgerError(f"localhost preview state must use 127.0.0.1: {path}")
+    else:
+        if bind_address not in ipaddress.ip_network("100.64.0.0/10"):
+            raise LedgerError(f"Tailscale preview state must use a Tailscale IPv4 address: {path}")
+        display_is_magicdns = bool(
+            re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\.ts\.net", display_host)
+        )
+        if display_host != bind_host and not display_is_magicdns:
+            raise LedgerError(
+                f"Tailscale preview display_host must be its bind IP or MagicDNS name: {path}"
+            )
+    expected_url = f"http://{display_host}:{value['port']}/"
+    expected_health_url = f"http://{bind_host}:{value['port']}{PREVIEW_HEALTH_PATH}"
+    if value["url"] != expected_url:
+        raise LedgerError(f"preview state URL does not match its validated endpoint: {path}")
+    if value["health_url"] != expected_health_url:
+        raise LedgerError(f"preview health URL does not match its validated endpoint: {path}")
     return PreviewState(**value)

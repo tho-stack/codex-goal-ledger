@@ -39,7 +39,7 @@ Valid effective values include an exact confirmed model/effort, `current-runtime
 
 ## Runtime decision rule
 
-1. Run `scripts/execution_profile.py preflight --implementer <agent-name>` and repeat `--swarm-implementer <agent-name>` for the planned mix; verify the owned fleet, every selected profile, and `[features.multi_agent_v2]` with `hide_spawn_agent_metadata = false`, `max_concurrent_threads_per_session = 8`, and `tool_namespace = "agents"`.
+1. Run `scripts/execution_profile.py preflight --implementer <agent-name>` and repeat `--swarm-implementer <agent-name>` for the planned mix; verify the owned fleet, every selected profile, native `[agents]` limits `max_threads = 8` and `max_depth = 1`, and `[features.multi_agent_v2]` with `hide_spawn_agent_metadata = false`, `max_concurrent_threads_per_session = 8`, and `tool_namespace = "agents"`.
 2. Treat `configured`, `session-visible`, and `runtime-confirmed` as separate states. Open a new task after installation before assessing session visibility.
 3. Prefer the selected owned implementer; use explicit model and effort overrides only when the current delegation surface supports both.
 4. Record the invoked role before execution and the effective model/effort only from runtime evidence. Configuration or a desired assignment is not runtime proof.
