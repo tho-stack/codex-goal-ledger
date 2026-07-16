@@ -628,6 +628,62 @@ class GoalLedgerTests(unittest.TestCase):
         self.assertNotEqual(0, invalid.returncode)
         self.assertIn("remove the conversational GPT Pro approval gate", invalid.stderr)
 
+    def test_started_goal_rejects_reauthorization_of_in_scope_execution(self) -> None:
+        goal_dir, _ = self.init()
+        progress = goal_dir / "progress.md"
+        self.replace_once(
+            progress,
+            "Review the contract and start the first evidence-producing milestone.",
+            "To resume, explicitly authorize one v3 plant-blind qualification bound to "
+            "the frozen manifest and resource budget.",
+        )
+        self.render(goal_dir)
+        invalid = self.validate(goal_dir, expected=None)
+        self.assertNotEqual(0, invalid.returncode)
+        self.assertIn(
+            "remove the repeated in-scope execution approval gate; starting the goal "
+            "authorizes the entire accepted execution envelope in Scope and Authorization",
+            invalid.stderr,
+        )
+
+    def test_started_goal_rejects_reauthorization_of_hardware_research(self) -> None:
+        goal_dir, _ = self.init()
+        progress = goal_dir / "progress.md"
+        self.replace_once(
+            progress,
+            "Review the contract and start the first evidence-producing milestone.",
+            "Await explicit owner authorization before continuing the hardware and component "
+            "research already recorded in Scope.",
+        )
+        self.render(goal_dir)
+        invalid = self.validate(goal_dir, expected=None)
+        self.assertNotEqual(0, invalid.returncode)
+        self.assertIn("remove the repeated in-scope execution approval gate", invalid.stderr)
+
+    def test_real_external_boundary_may_still_require_owner_approval(self) -> None:
+        goal_dir, _ = self.init()
+        progress = goal_dir / "progress.md"
+        self.replace_once(
+            progress,
+            "Review the contract and start the first evidence-producing milestone.",
+            "Await owner approval before the external transmission of the implementation "
+            "packet.",
+        )
+        self.render(goal_dir)
+        self.validate(goal_dir)
+
+    def test_action_outside_recorded_envelope_may_require_owner_approval(self) -> None:
+        goal_dir, _ = self.init()
+        progress = goal_dir / "progress.md"
+        self.replace_once(
+            progress,
+            "Review the contract and start the first evidence-producing milestone.",
+            "Await owner approval because this live hardware experiment is outside the "
+            "recorded envelope.",
+        )
+        self.render(goal_dir)
+        self.validate(goal_dir)
+
     def test_multiple_fable_rounds_are_recorded_and_validated(self) -> None:
         goal_dir, _ = self.init(fable_feedback="yes", fable_review_rounds=3)
         goal_text = (goal_dir / "goal.md").read_text(encoding="utf-8")

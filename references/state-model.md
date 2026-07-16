@@ -70,5 +70,6 @@ Allowed values are `pending`, `active`, `blocked`, `complete`, and `skipped`. A 
 - GPT Pro transport state is independent of goal state. `packet-ready`, `ui-ready`, and `manual-handoff-ready` are resumable round states and do not alone make the goal blocked.
 - Dashboard review nodes and progress tracks are derived views. Their states must come from review artifacts, Verification rows, phase rows, and gates rather than a separate mutable dashboard record.
 - A preview URL with a past health check is historical evidence. Treat a stopped or failed endpoint as stale until restarted and checked again.
+- A started goal's recorded Scope and Authorization are one standing execution envelope across phases and sessions. Waiting for renewed approval of web or literature research, hardware or component research, downloads, goal-scoped dependency setup, bounded local work, implementation, tests, benchmarks, qualification, configured reviews, frozen retries, or an in-scope replacement run is ledger drift and cannot support `blocked`; manifests, hashes, and resource caps are custody evidence rather than permission boundaries.
 
 When facts conflict, preserve the more conservative state and record the contradiction as an open gate until evidence resolves it.

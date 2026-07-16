@@ -28,6 +28,7 @@ It is designed for work that can outlive one chat session: difficult implementat
 - Owned Codex implementation and review agents, including Luna, Sol, and Terra effort presets and mixed swarms.
 - HTTP preview over Tailscale when available, with a localhost fallback; no `file://` dependency.
 - Recovery capsules and clean-session handoffs that state the last verified truth and exact next action.
+- One goal, one execution envelope: once planning is resolved, in-scope web and literature research, hardware investigation, dependency setup, implementation, local compute, qualification, testing, reviews, recovery, and frozen retries continue unattended without repeated consent prompts.
 
 ## Review and rescue circuit
 

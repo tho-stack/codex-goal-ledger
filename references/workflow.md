@@ -32,6 +32,8 @@ An effective required-input round covers:
 - what actions need approval;
 - whether to use the default Luna Max implementer, another owned preset, or a mixed swarm for genuinely independent work.
 
+For an unattended or overnight goal, define one positive execution envelope rather than a list of command-level approvals. Include the repositories and data sources, web or literature research, hardware or component research, downloads and dependency setup, expected local or network tools, bounded compute and experiments, review destinations, hardware interfaces if any, and explicit exclusions. If the user says to authorize the whole goal, record the broad non-destructive envelope and proceed; do not turn every category into another question.
+
 Make this the first interactive planning checkpoint. In the same checkpoint, ask for an explicit `yes` or `no` on all six independent items and show a contextual recommendation:
 
 1. Claude Fable peer feedback — recommend `yes` when the plan is difficult, ambiguous, high-risk, or benefits from feature and science ideation by a second model before implementation; ask for 1-10 rounds (default 1) and explain that `yes` authorizes preparing the Anthropic review lane while every fresh exact hashed manifest still receives an owner-facing native approval checkbox;
@@ -53,6 +55,8 @@ Run `scripts/init_goal.py` with a lowercase hyphenated slug. Pass `--fable-feedb
 
 Review the generated contract before execution. Replace every scaffolded success criterion with an observable check. Record non-goals and approval boundaries once.
 
+Initialization establishes standing execution authority for the entire accepted envelope. After the planning checkpoint is resolved and the goal starts, proceed automatically across phases and sessions with all recorded work: repository and browser actions, network/web and literature research, hardware and component research, downloads, goal-scoped dependency setup, implementation, delegation, bounded compute, tests, benchmarks, qualification campaigns, frozen retries, configured reviews, and temporary-environment work. Exact manifests, hashes, fixed resource limits, changed implementation details, failed attempts, successor fixtures, and resumed sessions strengthen custody but do not require renewed permission. Ask again only when the next action is outside the envelope or requires a platform-native security confirmation that was not safely pre-authorized. Purchases, public publishing or messages, destructive actions, secret disclosure, unsafe physical operations, and material scope expansion are outside the default envelope unless positively included and bounded. An explicitly owner-requested prepare-only contract is also a real boundary; the agent may not create that restriction after goal start.
+
 Pass the primary preset as `init_goal.py --implementation-agent <agent-name>` and repeat `--swarm-implementer <agent-name>` only for additional independently owned lanes. Mirror that selection in `scripts/execution_profile.py preflight --implementer <agent-name>` with repeated `--swarm-implementer` arguments before routing implementation. Preflight must verify the owned agent registrations and the required `[features.multi_agent_v2]` values before swarm work is promised. If the owned profiles were just installed, open a new task and verify that every selected implementer plus `goal-ledger-reviewer` is session-visible. Record configured, session-visible, invoked, and runtime-confirmed states separately in the v4 Execution profile table.
 
 When Fable feedback is `yes`, first run `execution_profile.py preflight --require-external-review-approval` while still in planning. If it fails, repair configuration only with explicit authority and open a new task; do not wait until the review call to discover that approval is auto-reviewed or disabled. Prepare round 1 after the contract and phase plan stabilize and before implementation. Add only repository-relative `--context-file` evidence needed beyond the automatically included goal, progress, and prior-round files. Inspect the emitted paths, sizes, hashes, destination, and digest, then submit the identical command with `--approve-transmission <digest>` through Codex `require_escalated`; put those concrete details in the native justification so the owner-facing checkbox is informed and exact. Do not create a reply-based approval gate. Default to High effort; use XHigh only for difficult or high-risk planning. After each round, surface optional information; verify and reconcile findings, feature ideas, and scientific hypotheses; record proposal decisions; update and validate the plan; then prepare a new manifest for the next round. In-scope proposals may enter the contract only after verification. Adjacent or future proposals remain deferred unless the user authorizes scope expansion. Do not run identical back-to-back reviews against an unreconciled plan. Record all round artifacts in Verification. See [fable-peer.md](fable-peer.md).
@@ -70,6 +74,7 @@ Build phases around outcomes, not arbitrary task counts. A typical long run has 
 Before unattended execution:
 
 - confirm one active phase and one next gate;
+- preflight the entire execution envelope, surface any platform-native confirmations that would otherwise interrupt the run, and obtain safely scoped reusable approvals while the owner is present when the platform supports them;
 - include every selected closeout lane in the phase plan so it can complete without waiting for the user to return;
 - assign every delegated work item in Custody;
 - record expected outputs and stable evidence paths;
@@ -157,6 +162,8 @@ Completion requires all of the following:
 If any condition fails, keep the goal active or blocked as appropriate and record the smallest unblocking action.
 
 Repository `status: blocked` describes the objective and may be recorded as soon as a concrete condition prevents meaningful work. An external goal-state tool may impose a separate repeated-blocker threshold; honor that threshold without rewriting the repository state to match it.
+
+Waiting for renewed approval of already-authorized in-scope execution is not a concrete blocker. Remove that gate, restore the phase and goal to the evidence-supported active state, and continue from the prepared action. Three repeated idle turns do not legitimize an invented approval dependency.
 
 When external LLM review is `yes`, generate `review-prompt.md` beside `goal.md`. When clean-session handoff is `yes`, generate `handoff-prompt.md` beside `goal.md`. Run:
 

@@ -55,6 +55,10 @@ Preserve the more conservative state and add an open gate describing the contrad
 
 Treat the check as `pending` unless a complete result and stable artifact exist. Re-run the bounded command; do not infer success from partial output.
 
+### In-scope work is waiting for renewed owner authorization
+
+Treat this as ledger drift, not an external blocker. Starting the goal already authorized the entire accepted execution envelope, including web and literature research, hardware and component research, downloads, goal-scoped dependency setup, bounded local compute, tests, benchmarks, qualification campaigns, frozen retries, implementation, configured reviews, and in-scope replacement runs. A new manifest, hash, resource cap, failed attempt, contract revision, or resumed task does not revoke that authority. Remove the redundant gate, restore goal and phase state to the evidence-supported active state, preserve the prepared custody artifacts, and execute the smallest safe next action. Do not wait three turns, request a typed authorization sentence, or mark the goal blocked. Ask only if the next action is genuinely outside the recorded envelope or hits an unavoidable platform-native security boundary that was not pre-authorized.
+
 ### External dependency blocks progress
 
 Name the dependency, attempted checks, authorization boundary, and smallest user or external action that unblocks the run. Set the repository goal to `blocked` as soon as that dependency prevents meaningful progress; otherwise keep it active with honest execution health. Update an external goal-state tool to blocked only when that separate tool's own threshold is met.

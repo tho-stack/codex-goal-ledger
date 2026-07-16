@@ -147,6 +147,14 @@ V4_EXECUTION_LAYERS = (
     "Final adversarial review",
 )
 CLOSEOUT_CHOICES = {"ask", "yes", "no"}
+CURRENT_STATE_SECTIONS = (
+    "At a glance",
+    "Phase tracker",
+    "Current focus",
+    "Open gates",
+    "Recovery capsule",
+    "Next action",
+)
 
 
 class Problems:
@@ -194,6 +202,44 @@ class DashboardAudit(HTMLParser):
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.handle_starttag(tag, attrs)
+
+
+def _redundant_execution_approval_gate(progress: Document) -> str | None:
+    """Return a live-state line that re-gates already-authorized local execution."""
+    authorization = re.compile(
+        r"\b(?:explicit(?:ly)?\s+)?(?:owner\s+)?"
+        r"(?:authorize|authorization|authority|approval|approve)\b"
+    )
+    waiting = re.compile(
+        r"\b(?:await|awaiting|waiting|wait|need|needs|require|requires|required|"
+        r"request|requested|reply|resume|not granted|before|do not)\b"
+    )
+    ordinary_execution = re.compile(
+        r"\b(?:plant blind|qualification|benchmark|validation|test|testing|"
+        r"implementation|build|simulation|solver|experiment|campaign|research|"
+        r"literature|hardware|component|download|dependency setup|installation|"
+        r"browser|local (?:run|compute|execution)|replacement run|retry|rerun|re run)\b"
+    )
+    real_boundary = re.compile(
+        r"\b(?:external (?:transmission|write|export)|data export|destructive|"
+        r"purchase|public (?:publish|publishing|message)|secret disclosure|"
+        r"unsafe physical|account access|material scope expansion|"
+        r"outside (?:the )?(?:accepted |recorded )?(?:goal )?(?:scope|envelope)|"
+        r"not authorized by (?:the )?(?:goal|contract))\b"
+    )
+
+    for section in CURRENT_STATE_SECTIONS:
+        for raw_line in get_section(progress, section).splitlines():
+            line = normalize_key(strip_markdown(raw_line))
+            if (
+                line
+                and authorization.search(line)
+                and waiting.search(line)
+                and ordinary_execution.search(line)
+                and not real_boundary.search(line)
+            ):
+                return line
+    return None
 
 
 def _metadata(document: Document, fields: tuple[str, ...], problems: Problems) -> None:
@@ -547,6 +593,14 @@ def _validate_markdown(goal_dir: Path, problems: Problems) -> tuple[Document, Do
         problems.add(
             f"{goal.path}: Closeout options must contain these exact ordered rows: "
             + "; ".join(expected_closeout_labels)
+        )
+
+    redundant_execution_gate = _redundant_execution_approval_gate(progress)
+    if redundant_execution_gate:
+        problems.add(
+            f"{progress.path}: remove the repeated in-scope execution approval gate; "
+            "starting the goal authorizes the entire accepted execution envelope in Scope and "
+            "Authorization, while manifests, hashes, and resource caps are custody evidence"
         )
 
     if (
