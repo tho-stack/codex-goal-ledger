@@ -9,6 +9,12 @@ from pathlib import Path
 import sys
 from typing import Mapping
 
+from managed_files import (
+    atomic_replace_managed,
+    managed_path_exists,
+    normalize_managed_goal_dir,
+    read_managed_bytes,
+)
 from ledger_common import (
     Document,
     LedgerError,
@@ -129,7 +135,7 @@ def parse_closeout_options(goal: Document) -> dict[str, str]:
 
 def load_closeout_options(goal_dir: Path) -> tuple[Document, dict[str, str]]:
     """Load goal.md and return its validated closeout choices."""
-    goal_dir = goal_dir.resolve()
+    goal_dir = normalize_managed_goal_dir(goal_dir)
     project_root_for(goal_dir)
     goal = load_document(goal_dir / "goal.md")
     return goal, parse_closeout_options(goal)
@@ -167,7 +173,7 @@ def build_closeout_prompt_artifacts(
     choices: Mapping[str, str] | None = None,
 ) -> dict[Path, bytes]:
     """Build exact selected prompt bytes without mutating the filesystem."""
-    goal_dir = goal_dir.resolve()
+    goal_dir = normalize_managed_goal_dir(goal_dir)
     project_root_for(goal_dir)
     if goal is None:
         goal = load_document(goal_dir / "goal.md")
@@ -199,24 +205,39 @@ def closeout_prompt_problems(
     goal: Document | None = None,
 ) -> list[str]:
     """Return exact-byte or selection drift for managed closeout prompts."""
-    goal_dir = goal_dir.resolve()
+    goal_dir = normalize_managed_goal_dir(goal_dir)
     expected = build_closeout_prompt_artifacts(goal_dir, goal=goal)
     problems: list[str] = []
     for _, (artifact_name, _) in PROMPT_ARTIFACTS.items():
         path = goal_dir / artifact_name
         if path in expected:
-            if not path.is_file():
+            current = read_managed_bytes(
+                path,
+                root=goal_dir,
+                label=f"managed closeout prompt {artifact_name}",
+                missing_ok=True,
+            )
+            if current is None:
                 problems.append(f"missing selected closeout prompt: {artifact_name}")
-            elif path.read_bytes() != expected[path]:
+            elif current != expected[path]:
                 problems.append(f"stale selected closeout prompt: {artifact_name}")
-        elif path.exists():
+        elif managed_path_exists(
+            path,
+            root=goal_dir,
+            label=f"managed closeout prompt {artifact_name}",
+        ):
+            read_managed_bytes(
+                path,
+                root=goal_dir,
+                label=f"managed closeout prompt {artifact_name}",
+            )
             problems.append(f"unselected closeout prompt must be absent: {artifact_name}")
     return problems
 
 
 def sync_closeout_prompts(goal_dir: Path, *, check: bool = False) -> PromptSyncResult:
     """Synchronize selected prompt artifacts, or report drift without mutation."""
-    goal_dir = goal_dir.resolve()
+    goal_dir = normalize_managed_goal_dir(goal_dir)
     goal, choices = load_closeout_options(goal_dir)
     expected = build_closeout_prompt_artifacts(goal_dir, goal=goal, choices=choices)
     problems = tuple(closeout_prompt_problems(goal_dir, goal=goal))
@@ -229,11 +250,20 @@ def sync_closeout_prompts(goal_dir: Path, *, check: bool = False) -> PromptSyncR
         path = goal_dir / artifact_name
         data = expected.get(path)
         if data is not None:
-            if not path.is_file() or path.read_bytes() != data:
-                path.write_bytes(data)
+            current = read_managed_bytes(
+                path,
+                root=goal_dir,
+                label=f"managed closeout prompt {artifact_name}",
+                missing_ok=True,
+            )
+            if current != data:
+                atomic_replace_managed(
+                    path,
+                    data,
+                    root=goal_dir,
+                    label=f"managed closeout prompt {artifact_name}",
+                )
                 changed.append(path)
-        elif path.exists() and not path.is_file():
-            raise LedgerError(f"managed closeout artifact is not a regular file: {path}")
 
     remaining = tuple(closeout_prompt_problems(goal_dir, goal=goal))
     return PromptSyncResult(choices, tuple(changed), tuple(removed), remaining)

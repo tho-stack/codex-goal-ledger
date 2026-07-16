@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 
 from fable_transport import atomic_write_json, run_claude_durable
@@ -79,6 +82,117 @@ print(json.dumps({"result": "durable"}))
                 invocation_id="b" * 64,
                 timeout_seconds=10,
             )
+
+    def test_concurrent_callers_claim_launch_before_process_creation(self) -> None:
+        slow = self.root / "slow-success.py"
+        slow.write_text(
+            """import json, os, time
+with open(os.environ["COUNT"], "a", encoding="utf-8") as stream:
+    stream.write("call\\n")
+time.sleep(0.75)
+print(json.dumps({"result": "durable"}))
+""",
+            encoding="utf-8",
+        )
+        environment = os.environ.copy()
+        environment["COUNT"] = str(self.count)
+        command = [sys.executable, str(slow), "prompt"]
+        transport = self.root / "concurrent-transport"
+        barrier = threading.Barrier(2)
+
+        def invoke() -> object:
+            barrier.wait(timeout=5)
+            try:
+                return run_claude_durable(
+                    command,
+                    cwd=self.root,
+                    env=environment,
+                    transport_dir=transport,
+                    invocation_id="e" * 64,
+                    timeout_seconds=10,
+                )
+            except LedgerError as exc:
+                return exc
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _: invoke(), range(2)))
+
+        successful = [result for result in results if not isinstance(result, LedgerError)]
+        refused = [result for result in results if isinstance(result, LedgerError)]
+        self.assertEqual(1, len(successful))
+        self.assertEqual(1, len(refused))
+        self.assertIn("do not submit a duplicate", str(refused[0]))
+        self.assertEqual(["call"], self.count.read_text(encoding="utf-8").splitlines())
+        self.assertFalse(
+            (transport / "attempt-1" / ".launch-claim.json").exists()
+        )
+
+    def test_dead_pre_status_claim_without_outputs_is_recovered(self) -> None:
+        dead = subprocess.Popen(
+            [sys.executable, "-c", "pass"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        dead.wait(timeout=5)
+        transport = self.root / "stale-unlaunched"
+        attempt = transport / "attempt-1"
+        attempt.mkdir(parents=True)
+        atomic_write_json(
+            attempt / ".launch-claim.json",
+            {
+                "schema_version": 1,
+                "claim_id": "stale-unlaunched",
+                "invocation_digest": "f" * 64,
+                "claimant_pid": dead.pid,
+            },
+        )
+        environment = os.environ.copy()
+        environment["COUNT"] = str(self.count)
+        result = run_claude_durable(
+            [sys.executable, str(self.fake), "prompt"],
+            cwd=self.root,
+            env=environment,
+            transport_dir=transport,
+            invocation_id="f" * 64,
+            timeout_seconds=10,
+        )
+        self.assertFalse(result.recovered)
+        self.assertEqual(["call"], self.count.read_text(encoding="utf-8").splitlines())
+        self.assertFalse((attempt / ".launch-claim.json").exists())
+
+    def test_dead_claim_with_output_evidence_remains_uncertain(self) -> None:
+        dead = subprocess.Popen(
+            [sys.executable, "-c", "pass"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        dead.wait(timeout=5)
+        transport = self.root / "stale-with-output"
+        attempt = transport / "attempt-1"
+        attempt.mkdir(parents=True)
+        atomic_write_json(
+            attempt / ".launch-claim.json",
+            {
+                "schema_version": 1,
+                "claim_id": "stale-with-output",
+                "invocation_digest": "1" * 64,
+                "claimant_pid": dead.pid,
+            },
+        )
+        (attempt / "raw-response.json").write_text("partial remote evidence\n", encoding="utf-8")
+        environment = os.environ.copy()
+        environment["COUNT"] = str(self.count)
+        with self.assertRaisesRegex(LedgerError, "do not submit a duplicate"):
+            run_claude_durable(
+                [sys.executable, str(self.fake), "prompt"],
+                cwd=self.root,
+                env=environment,
+                transport_dir=transport,
+                invocation_id="1" * 64,
+                timeout_seconds=10,
+            )
+        self.assertFalse(self.count.exists())
+        self.assertTrue((attempt / ".launch-claim.json").exists())
 
     def test_timeout_is_unknown_outcome_and_never_resubmits(self) -> None:
         slow = self.root / "slow.py"

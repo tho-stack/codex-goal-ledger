@@ -4,7 +4,7 @@ interface:
   icon_small: "./assets/icon-small.svg"
   icon_large: "./assets/icon-large.svg"
   brand_color: "#315E71"
-  default_prompt: "Use $codex-goal-ledger to run this long goal. In the first planning checkpoint, identify extra context that could improve the result and use app-native controls for every review choice plus the implementation family/effort selector. Configure optional Claude Fable planning rounds, bounded scientific rescue, and native GPT Pro review through the bundled restricted MCP App when ready, with Safari/Chrome and owner fallback. Verify multi_agent_v2 and owner-facing external-review approval routing, preserve durable recovery evidence, and serve an HTTP dashboard that visualizes review loops and truthful progress."
+  default_prompt: "Use $codex-goal-ledger to run this long goal. In the first planning checkpoint, identify extra context that could improve the result and use app-native controls for every review choice plus the implementation family/effort selector. Configure optional Claude Fable planning rounds, bounded scientific rescue, and native GPT Pro review with the bundled restricted MCP App first, user-operated native Chat plus Add to task next, then Safari/Chrome and owner fallback. Verify multi_agent_v2 and owner-facing external-review approval routing, preserve durable recovery evidence, and serve an HTTP dashboard that visualizes review loops and truthful progress."
 
 policy:
   allow_implicit_invocation: true

@@ -354,6 +354,59 @@ class GoalLedgerTests(unittest.TestCase):
         self.validate(goal_dir)
         self.assertNotEqual(stale, css.read_bytes())
 
+    def test_render_rejects_symlinked_dashboard_and_asset_without_overwrite(self) -> None:
+        goal_dir, _ = self.init()
+        dashboard = goal_dir / "index.html"
+        original_dashboard = dashboard.read_bytes()
+        outside_dashboard = self.project / "outside-dashboard.html"
+        outside_dashboard.write_bytes(b"preserve external dashboard\n")
+        dashboard.unlink()
+        dashboard.symlink_to(outside_dashboard)
+
+        rejected_dashboard = self.render(goal_dir, expected=None)
+        self.assertNotEqual(0, rejected_dashboard.returncode)
+        self.assertIn("must not be a symlink", rejected_dashboard.stderr)
+        self.assertEqual(b"preserve external dashboard\n", outside_dashboard.read_bytes())
+        self.assertTrue(dashboard.is_symlink())
+
+        dashboard.unlink()
+        dashboard.write_bytes(original_dashboard)
+        asset = self.project / "docs" / "assets" / "goal-ledger.css"
+        outside_asset = self.project / "outside-asset.css"
+        outside_asset.write_bytes(b"preserve external asset\n")
+        asset.unlink()
+        asset.symlink_to(outside_asset)
+
+        rejected_asset = self.render(goal_dir, "--sync-assets", expected=None)
+        self.assertNotEqual(0, rejected_asset.returncode)
+        self.assertIn("must not be a symlink", rejected_asset.stderr)
+        self.assertEqual(b"preserve external asset\n", outside_asset.read_bytes())
+        self.assertTrue(asset.is_symlink())
+
+    def test_sync_assets_rejects_symlinked_docs_ancestor_without_external_write(self) -> None:
+        outside_project = self.project / "outside-project"
+        outside_goal, _ = self.init(
+            project=outside_project,
+            slug="ancestor-target",
+        )
+        outside_asset = outside_project / "docs" / "assets" / "goal-ledger.css"
+        outside_asset.write_bytes(b"preserve ancestor target\n")
+
+        alias_project = self.project / "alias-project"
+        alias_project.mkdir()
+        (alias_project / "docs").symlink_to(
+            outside_project / "docs",
+            target_is_directory=True,
+        )
+        aliased_goal = (
+            alias_project / "docs" / "goals" / outside_goal.name
+        )
+
+        rejected = self.render(aliased_goal, "--sync-assets", expected=None)
+        self.assertNotEqual(0, rejected.returncode)
+        self.assertIn("ancestor must not be a symlink", rejected.stderr)
+        self.assertEqual(b"preserve ancestor target\n", outside_asset.read_bytes())
+
     def test_interrupted_execution_and_lost_custody_remain_valid_and_recoverable(self) -> None:
         goal_dir, _ = self.init()
         progress = goal_dir / "progress.md"
@@ -736,8 +789,7 @@ class GoalLedgerTests(unittest.TestCase):
         html_text = (goal_dir / "index.html").read_text(encoding="utf-8")
         self.assertIn("fable_review_rounds: 3", goal_text)
         self.assertIn(
-            "authorizes preparing 3 sequential read-only Claude review rounds through "
-            "Anthropic Claude",
+            "authorizes 3 sequential read-only Claude review rounds through Anthropic Claude",
             goal_text,
         )
         self.assertIn("Ask Fable · 3 rounds", html_text)
@@ -752,8 +804,7 @@ class GoalLedgerTests(unittest.TestCase):
         goal_dir, _ = self.init(fable_feedback="yes")
         goal_text = (goal_dir / "goal.md").read_text(encoding="utf-8")
         self.assertIn(
-            "A recorded Claude Fable `yes` is lane authorization to prepare the configured "
-            "reviews for Anthropic Claude through the owner's account",
+            "A recorded Claude Fable `yes` authorizes the configured lane",
             goal_text,
         )
         progress = goal_dir / "progress.md"
@@ -766,9 +817,9 @@ class GoalLedgerTests(unittest.TestCase):
         invalid = self.validate(goal_dir, expected=None)
         self.assertNotEqual(0, invalid.returncode)
         self.assertIn(
-            "remove the conversational Claude Fable approval gate; lane authorization permits "
-            "manifest preparation, while exact transmission approval must use the owner-facing "
-            "native Codex checkbox",
+            "remove the conversational Claude Fable approval gate; the one-time goal-level "
+            "Fable authorization covers every configured transmission inside its disclosed "
+            "envelope",
             invalid.stderr,
         )
 
@@ -861,12 +912,13 @@ class GoalLedgerTests(unittest.TestCase):
             self.assertIn("must not block", contract)
 
         self.assertLess(skill.index("request_user_input"), skill.index("## Operate"))
-        self.assertIn("two consecutive three-question", skill)
-        self.assertIn("Do not render a prose questionnaire", controls)
+        self.assertIn("Approve selected lanes", skill)
+        self.assertIn("literal checkboxes", controls)
+        self.assertIn("Do not ask for a typed approval sentence afterward", controls)
         self.assertIn("Luna | Max | `goal-ledger-implementer`", controls)
         self.assertIn("Sol | Ultra | `goal-ledger-implementer-sol-ultra`", controls)
         self.assertIn(
-            "does not expose a literal multi-select checkbox group or range slider",
+            "not a literal multi-select checkbox group or range slider",
             controls,
         )
         self.assertIn("Do not ask the user to type or click a second", controls)

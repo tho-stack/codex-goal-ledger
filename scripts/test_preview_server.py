@@ -183,6 +183,38 @@ class PreviewServerTests(unittest.TestCase):
                 serve_dashboard.choose_endpoint("auto", "tailscale"),
             )
 
+    def test_server_rejects_symlinked_shared_asset_before_binding(self) -> None:
+        outside = self.project / "outside-shared-asset.txt"
+        outside.write_text("private preview data\n", encoding="utf-8")
+        asset = self.project / "docs" / "assets" / "goal-ledger.css"
+        asset.unlink()
+        asset.symlink_to(outside)
+
+        with self.assertRaisesRegex(LedgerError, "must not be a symlink"):
+            serve_dashboard.start_server(
+                self.goal_dir,
+                bind_host="127.0.0.1",
+                display_host="127.0.0.1",
+                transport="localhost",
+                requested_port=0,
+            )
+        self.assertEqual("private preview data\n", outside.read_text(encoding="utf-8"))
+
+    def test_preview_state_render_rejects_symlinked_dashboard_without_overwrite(self) -> None:
+        outside = self.project / "outside-dashboard.html"
+        outside.write_text("preserve dashboard target\n", encoding="utf-8")
+        dashboard = self.goal_dir / "index.html"
+        dashboard.unlink()
+        dashboard.symlink_to(outside)
+
+        with self.assertRaisesRegex(LedgerError, "must not be a symlink"):
+            serve_dashboard.render_with_state(self.goal_dir)
+        self.assertEqual(
+            "preserve dashboard target\n",
+            outside.read_text(encoding="utf-8"),
+        )
+        self.assertTrue(dashboard.is_symlink())
+
     def test_port_collision_selects_the_next_available_port(self) -> None:
         occupied = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         occupied.bind(("127.0.0.1", 0))

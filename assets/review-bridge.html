@@ -188,7 +188,14 @@
           <label class="field"><span>GPT Pro gate</span><select id="pro-gate"><option>required</option><option>advisory</option></select></label>
           <label class="field"><span>Implementation preset</span><select id="implementer"></select></label>
         </div>
-        <div class="actions"><button id="submit-planning" class="button">Use these selections</button></div>
+        <label class="choice" style="margin-top:12px">
+          <input id="approve-fable-envelope" type="checkbox">
+          <span>
+            <span>Approve the selected Fable lanes once</span>
+            <span class="micro">Covers all configured planning rounds and scientific-rescue incidents inside the goal folder plus explicitly listed extra files. A later scope expansion requires another approval.</span>
+          </span>
+        </label>
+        <div class="actions"><button id="submit-planning" class="button">Approve selected lanes</button></div>
         <p id="planning-status" class="status" aria-live="polite"></p>
       </div>
     </section>
@@ -219,7 +226,7 @@
       </div>
       <div class="card">
         <div class="card-head"><h2>Manual response fallback</h2><span class="badge">Immutable</span></div>
-        <p class="lead">Normally Pro calls <code>submit_pro_review_response</code> itself. Paste the complete answer here only if that final tool call was omitted.</p>
+        <p class="lead">Normally Pro calls <code>write_review</code> itself. Paste the complete answer here only if that final tool call was omitted.</p>
         <textarea id="response" placeholder="Verdict: SIGNED OFF&#10;&#10;..."></textarea>
         <div class="actions"><button id="submit-response" class="button secondary">Store complete response</button></div>
         <p id="response-status" class="status" aria-live="polite"></p>
@@ -320,10 +327,28 @@
       $("pro-gate").value = defaults.pro_gate || "required";
       const delivery = $("pro-delivery");
       delivery.replaceChildren(...(schema.pro_deliveries || []).map(value => new Option(value, value)));
-      delivery.value = defaults.pro_delivery || "mcp-app";
+      delivery.value = defaults.pro_delivery || "auto-ui";
       const implementer = $("implementer");
       implementer.replaceChildren(...(schema.implementation_presets || []).map(item => new Option(`${item.family} · ${item.effort}`, item.agent)));
       implementer.value = defaults.implementation_agent || "goal-ledger-implementer";
+      updatePlanningApproval();
+    }
+
+    function selectedReviews() {
+      const reviews = {};
+      document.querySelectorAll("#choices input[type=checkbox]").forEach(input => {
+        reviews[input.dataset.key] = input.checked;
+      });
+      return reviews;
+    }
+
+    function updatePlanningApproval() {
+      const reviews = selectedReviews();
+      const fableSelected = Boolean(reviews.fable_feedback || reviews.fable_rescue);
+      $("approve-fable-envelope").disabled = !fableSelected;
+      if (!fableSelected) $("approve-fable-envelope").checked = false;
+      $("submit-planning").disabled =
+        fableSelected && !$("approve-fable-envelope").checked;
     }
 
     function renderReview(review) {
@@ -359,9 +384,15 @@
       else renderPlanning(state.data.planning);
     }
 
+    $("choices").addEventListener("change", updatePlanningApproval);
+    $("approve-fable-envelope").addEventListener("change", updatePlanningApproval);
+
     $("submit-planning").addEventListener("click", () => {
-      const reviews = {};
-      document.querySelectorAll("#choices input[type=checkbox]").forEach(input => { reviews[input.dataset.key] = input.checked; });
+      const reviews = selectedReviews();
+      const fableSelected = Boolean(reviews.fable_feedback || reviews.fable_rescue);
+      if (fableSelected && !$("approve-fable-envelope").checked) {
+        return setStatus("planning-status", "Approve the one-time Fable envelope first.", true);
+      }
       const selection = {
         reviews,
         fable_review_rounds: Number($("fable-rounds").value),
@@ -369,10 +400,22 @@
         pro_review_stage: $("pro-stage").value,
         pro_review_delivery: $("pro-delivery").value,
         pro_review_gate: $("pro-gate").value,
-        implementation_agent: $("implementer").value
+        implementation_agent: $("implementer").value,
+        owner_approval: {
+          fable_goal_authorization: fableSelected,
+          includes_planning_rounds: reviews.fable_feedback,
+          includes_scientific_rescue: reviews.fable_rescue,
+          path_envelope: "goal directory plus explicitly listed additional files",
+          expansion_requires_new_approval: true
+        }
       };
       postUserMessage(`Goal Ledger planning selections:\n\n\`\`\`json\n${JSON.stringify(selection, null, 2)}\n\`\`\``);
-      setStatus("planning-status", "Selections posted into the conversation.");
+      setStatus(
+        "planning-status",
+        fableSelected
+          ? "Selections and one-time Fable authorization posted. No typed approval sentence is required."
+          : "Selections posted into the conversation."
+      );
     });
 
     $("begin-review").addEventListener("click", async () => {
@@ -391,7 +434,7 @@
 
     $("ask-pro").addEventListener("click", () => {
       postUserMessage(
-        "Use the Codex Goal Ledger app now. Read every member listed in the bound immutable packet with read_review_file. Follow START-HERE.md exactly. Produce one complete response beginning with `Verdict: SIGNED OFF` or `Verdict: BLOCKED`, then call submit_pro_review_response with the entire response byte-for-byte. Do not assume access to the live repository."
+        "Open the bound Goal Ledger workspace, read START-HERE.md and every file returned by list_files, use search when helpful, perform the requested review, then save the complete response with write_review. Do not assume shell or live repository access."
       );
       setStatus("review-action-status", "Review request posted to the active Pro conversation.");
     });

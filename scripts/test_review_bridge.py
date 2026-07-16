@@ -127,10 +127,15 @@ class ReviewBridgeTests(unittest.TestCase):
                 "read_review_file",
                 "begin_pro_review",
                 "submit_pro_review_response",
+                "open_workspace",
+                "list_files",
+                "read",
+                "search",
+                "write_review",
             },
             names,
         )
-        self.assertFalse(any(name in names for name in ("bash", "exec_command", "read", "write", "edit")))
+        self.assertFalse(any(name in names for name in ("bash", "exec_command", "write", "edit")))
         open_tool = next(tool for tool in tools if tool.name == "open_goal_ledger")
         self.assertEqual(WIDGET_URI, open_tool.meta["ui"]["resourceUri"])
         resources = asyncio.run(server.list_resources())
@@ -142,7 +147,11 @@ class ReviewBridgeTests(unittest.TestCase):
         server = build_server(self.scope)
         opened = asyncio.run(server.call_tool("open_goal_ledger", {}))
         self.assertEqual("review", opened.structuredContent["mode"])
-        self.assertEqual("packet-ready", opened.structuredContent["review"]["status"])
+        self.assertEqual("submitted-waiting-response", opened.structuredContent["review"]["status"])
+        initial_submission = json.loads((self.round_dir / "submission.json").read_text())
+        self.assertEqual("mcp-workspace-claim", initial_submission["submission_kind"])
+        self.assertIsNone(initial_submission["model_visible"])
+        self.assertIsNone(initial_submission["thread"])
 
         begun = asyncio.run(
             server.call_tool(
@@ -153,7 +162,7 @@ class ReviewBridgeTests(unittest.TestCase):
                 },
             )
         )
-        self.assertEqual("submitted-waiting-response", begun.structuredContent["status"])
+        self.assertEqual("already-submitted", begun.structuredContent["status"])
         submission = json.loads((self.round_dir / "submission.json").read_text())
         self.assertEqual("mcp-app", submission["transport"])
         self.assertEqual(self.scope.summary()["packet_sha256"], submission["packet_sha256"])
@@ -183,6 +192,89 @@ class ReviewBridgeTests(unittest.TestCase):
             server.call_tool("submit_pro_review_response", {"response": response})
         )
         self.assertEqual("already-recorded", repeated.structuredContent["status"])
+
+    def test_devspace_style_workspace_can_review_without_widget_begin_step(self) -> None:
+        server = build_server(self.scope)
+        opened = asyncio.run(server.call_tool("open_workspace", {}))
+        self.assertIn("START-HERE.md", [item["path"] for item in opened.structuredContent["workspace"]["members"]])
+        listed = asyncio.run(server.call_tool("list_files", {}))
+        for item in listed.structuredContent["files"]:
+            read = asyncio.run(server.call_tool("read", {"path": item["path"]}))
+            self.assertFalse(read.isError)
+        searched = asyncio.run(server.call_tool("search", {"query": "restricted review bridge"}))
+        self.assertTrue(searched.structuredContent["matches"])
+        response = (
+            "Verdict: SIGNED OFF\n\n"
+            "Required changes:\n- None.\n\n"
+            "Risks:\n- Keep the bounded workspace.\n\n"
+            "Tests or verification:\n- Exercise all workspace tools.\n\n"
+            "Reasoning notes:\n- The supplied evidence is sufficient.\n"
+        )
+        written = asyncio.run(
+            server.call_tool(
+                "write_review",
+                {"response": response},
+            )
+        )
+        self.assertEqual("SIGNED OFF", written.structuredContent["verdict"])
+        submission = json.loads((self.round_dir / "submission.json").read_text())
+        self.assertEqual("mcp-app", submission["transport"])
+        self.assertEqual("mcp-workspace-claim", submission["submission_kind"])
+        self.assertIsNone(submission["model_visible"])
+        self.assertIsNone(submission["thread"])
+        self.run_tool("run_pro_review.py", "check", self.goal_dir)
+
+    def test_first_file_access_claims_transport_before_interruption_and_resumes_idempotently(self) -> None:
+        member = self.scope.summary()["members"][0]
+        server = build_server(self.scope)
+        read = asyncio.run(server.call_tool("read", {"path": member["path"]}))
+        self.assertFalse(read.isError)
+        submission_path = self.round_dir / "submission.json"
+        first_submission = submission_path.read_bytes()
+        submission = json.loads(first_submission)
+        self.assertEqual("mcp-app", submission["transport"])
+        self.assertEqual("mcp-workspace-claim", submission["submission_kind"])
+        self.assertIsNone(submission["model_visible"])
+        self.assertIsNone(submission["thread"])
+        self.assertEqual(1, self.scope.summary()["read_progress"]["read"])
+
+        recovered = build_server(self.scope)
+        opened = asyncio.run(recovered.call_tool("open_workspace", {}))
+        self.assertEqual("submitted-waiting-response", opened.structuredContent["workspace"]["status"])
+        self.assertEqual(first_submission, submission_path.read_bytes())
+
+        mixed = self.run_tool(
+            "run_pro_review.py",
+            "record-submission",
+            self.goal_dir,
+            "--stage",
+            "plan",
+            "--round",
+            "1",
+            "--model-visible",
+            "Pro Extended",
+            "--transport",
+            "native-chat",
+            "--thread",
+            "A different conversation",
+            expected=2,
+        )
+        self.assertIn("refusing transport mixing", mixed.stderr)
+        self.assertEqual(first_submission, submission_path.read_bytes())
+
+    def test_bound_status_claims_packet_but_unbound_planning_controls_do_not(self) -> None:
+        server = build_server(self.scope)
+        status = asyncio.run(server.call_tool("get_review_status", {}))
+        self.assertEqual("submitted-waiting-response", status.structuredContent["review"]["status"])
+        submission = json.loads((self.round_dir / "submission.json").read_text())
+        self.assertEqual("mcp-workspace-claim", submission["submission_kind"])
+
+        planning = build_server(None)
+        opened = asyncio.run(
+            planning.call_tool("open_goal_ledger", {"scientific_or_high_risk": False})
+        )
+        self.assertEqual("planning", opened.structuredContent["mode"])
+        self.assertNotIn("review", opened.structuredContent)
 
     def test_mcp_response_requires_all_reads_and_complete_shape(self) -> None:
         server = build_server(self.scope)
@@ -226,8 +318,16 @@ class ReviewBridgeTests(unittest.TestCase):
         self.assertEqual("planning", opened.structuredContent["mode"])
         planning = opened.structuredContent["planning"]
         self.assertEqual(6, len(planning["schema"]["review_choices"]))
-        self.assertEqual("mcp-app", planning["defaults"]["pro_delivery"])
+        self.assertEqual("auto-ui", planning["defaults"]["pro_delivery"])
+        self.assertIn("native-chat", planning["schema"]["pro_deliveries"])
         self.assertTrue(planning["defaults"]["fable_rescue"])
+        widget = (SCRIPT_DIR.parent / "assets" / "review-bridge.html").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('id="approve-fable-envelope"', widget)
+        self.assertIn("Approve selected lanes", widget)
+        self.assertIn("includes_scientific_rescue", widget)
+        self.assertIn("No typed approval sentence is required", widget)
 
     def test_operator_guide_covers_complete_one_time_setup_and_recovery(self) -> None:
         guide = (SCRIPT_DIR.parent / "references" / "review-bridge.md").read_text(

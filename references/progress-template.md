@@ -12,7 +12,7 @@ The canonical templates are shipped in `assets/templates/goal.md` and `assets/te
 - `updated`
 - `mode`
 - `fable_review_rounds` (1-10; defaults to 1 for legacy ledgers)
-- `pro_review_rounds` (1-3), `pro_review_stage`, `pro_review_delivery`, and `pro_review_gate` for ledger v6-v7; v7 defaults delivery to `auto-ui` and accepts the bundled `mcp-app` when its runtime and tunnel preflight pass
+- `pro_review_rounds` (1-3), `pro_review_stage`, `pro_review_delivery`, and `pro_review_gate` for ledger v6-v7; v7 defaults delivery to MCP-first `auto-ui`, followed by user-operated `native-chat`, platform browser fallback, and owner handoff
 - `allowed_skipped_phases`
 - `allowed_skipped_verifications`
 

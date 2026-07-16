@@ -4,11 +4,23 @@ Use this reference for the first interactive planning checkpoint.
 
 ## Native-control rule
 
-When `request_user_input` is available, call it immediately after bounded discovery. Do not render a prose questionnaire, ask the user to reply `yes/no`, or postpone the interaction until the end. Use at most three questions per call and two or three mutually exclusive options per question. Put the contextual recommendation first and suffix its label with `(Recommended)`.
+Prefer the already-connected bundled Goal Ledger app. Call `open_goal_ledger` in unbound planning mode immediately after bounded discovery. It renders literal checkboxes for all six choices, bounded lane and implementation selectors, a separate one-time Fable authorization checkbox, and an **Approve selected lanes** button.
 
-The current Codex control supports clickable single-choice cards in Plan mode. It does not expose a literal multi-select checkbox group or range slider. Do not claim otherwise. Treat each independent boolean as its own Yes/No control, and use a stepped model-family plus effort selector for implementation.
+When Fable planning or scientific rescue is checked, the approval button remains disabled until the owner checks **Approve the selected Fable lanes once**. The posted structured result contains:
 
-When native structured input is unavailable, prefer the bundled Goal Ledger MCP App if it is already connected: run its unbound planning server and call `open_goal_ledger`. The widget renders six actual checkboxes plus bounded round, stage, delivery, gate, model-family, and effort selectors, then posts one structured user message into the conversation. Read [review-bridge.md](review-bridge.md). If the app is not connected, explicitly say native controls require Plan mode in the current task and use one concise Markdown checklist so planning can still proceed. Do not turn app setup into a new blocking gate for an otherwise answerable planning checkpoint.
+```json
+{
+  "owner_approval": {
+    "fable_goal_authorization": true,
+    "includes_planning_rounds": true,
+    "includes_scientific_rescue": true
+  }
+}
+```
+
+Treat that click-generated record as the owner's planning answer and authorization to create the bounded `fable-goal-authorization.json`. Do not ask for a typed approval sentence afterward. The same authorization covers both selected Fable lanes.
+
+When the app is unavailable and `request_user_input` exists, call it immediately. The current Codex control supports clickable single-choice cards, not a literal multi-select checkbox group or range slider. Treat each independent boolean as its own Yes/No control and use a stepped model-family plus effort selector. If neither structured surface is available, use one concise Markdown checklist. Do not turn app setup into a new blocking gate.
 
 ## Required sequence
 
@@ -45,4 +57,4 @@ Ask about a mixed swarm only when discovery found independently owned work. If s
 
 ## GPT Pro submission choice
 
-A selected GPT Pro `yes` must disclose that the exact generated `request.md` and hashed `context-packet.zip` will be sent to OpenAI through the selected transport. With `mcp-app`, Pro reads only manifest-listed members from that ZIP through the restricted bridge; with browser delivery, the ZIP and request are uploaded. That selection authorizes one submission of exactly those artifacts after readiness and native security confirmation. Do not ask the user to type or click a second conversational `Press Send` approval. Ask again only if the destination changes, the goal scope expands, or the packet would include files outside its generated manifest.
+A selected GPT Pro `yes` must disclose that the exact generated `request.md` and hashed `context-packet.zip` will be sent to OpenAI through the selected transport. Default to MCP-first `auto-ui`: restricted `mcp-app`, user-operated native Chat/Pro plus **Add to task**, Safari/Chrome, then owner handoff. With `mcp-app`, Pro reads only manifest-listed ZIP members through the restricted bridge; native Chat and browser delivery upload the ZIP and request. That selection authorizes one submission of exactly those artifacts after readiness and native security confirmation. Native Chat is not Computer Use automation; the owner performs the host-app actions and returns the completed conversation with **Add to task**. Do not ask the user to type or click a second conversational `Press Send` approval. Ask again only if the destination changes, the goal scope expands, or the packet would include files outside its generated manifest.

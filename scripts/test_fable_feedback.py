@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -184,6 +185,8 @@ print(json.dumps({"structured_output": payload}))
         self.assertIn("Do reconciled review rounds reduce unresolved major findings?", text)
         self.assertIn("## Structured result", text)
         self.assertIn("**Round:** 1 of 1", text)
+        self.assertIn("**Transmission manifest:**", text)
+        self.assertIn("**Invocation digest:**", text)
         transport = (
             self.goal_dir
             / "evidence"
@@ -195,6 +198,24 @@ print(json.dumps({"structured_output": payload}))
         status = json.loads((transport / "transport.json").read_text(encoding="utf-8"))
         self.assertEqual("completed", status["state"])
         self.assertRegex(status["stdout_sha256"], r"^[0-9a-f]{64}$")
+        transport_root = transport.parent
+        manifest_path = transport_root / "transmission-manifest.json"
+        invocation_path = transport_root / "invocation.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        invocation = json.loads(invocation_path.read_text(encoding="utf-8"))
+        self.assertEqual(1, manifest["round"])
+        self.assertEqual(1, manifest["round_count"])
+        self.assertEqual(
+            [
+                "docs/goals/fable-test/goal.md",
+                "docs/goals/fable-test/progress.md",
+            ],
+            [item["path"] for item in manifest["files"]],
+        )
+        self.assertEqual("exact-manifest", invocation["authorization_kind"])
+        self.assertEqual(manifest["approval_digest"], invocation["authorization_digest"])
+        self.assertEqual(status["invocation_digest"], invocation["invocation_digest"])
+        self.assertRegex(invocation["manifest_sha256"], r"^[0-9a-f]{64}$")
         prompt = self.fake_claude_log.read_text(encoding="utf-8")
         self.assertIn("Act as an inventive product and science peer too", prompt)
         self.assertIn("Proposals are advisory and not authorization to expand scope", prompt)
@@ -208,6 +229,75 @@ print(json.dumps({"structured_output": payload}))
         reused = self.run_feedback()
         self.assertIn("already exists", reused.stdout)
         self.assertEqual(unchanged, artifact.read_bytes())
+
+    def test_check_requires_immutable_planning_manifest(self) -> None:
+        self.run_feedback()
+        manifest = (
+            self.goal_dir
+            / "evidence"
+            / "fable-transport"
+            / "planning-round-1"
+            / "transmission-manifest.json"
+        )
+        manifest.unlink()
+        checked = self.invoke_feedback("--check", expected=1)
+        self.assertIn("missing Fable planning transmission manifest", checked.stderr)
+
+    def test_check_accepts_legacy_feedback_without_custody_marker(self) -> None:
+        self.run_feedback()
+        artifact = self.goal_dir / "evidence" / "fable-feedback.md"
+        legacy = (
+            "\n".join(
+                line
+                for line in artifact.read_text(encoding="utf-8").splitlines()
+                if not line.startswith("- **Artifact schema:**")
+                if not line.startswith("- **Transmission manifest:**")
+                and not line.startswith("- **Invocation digest:**")
+            )
+            + "\n"
+        ).replace(
+            "# Claude Fable peer feedback (artifact schema 2)",
+            "# Claude Fable peer feedback",
+            1,
+        )
+        artifact.write_text(
+            legacy,
+            encoding="utf-8",
+        )
+        shutil.rmtree(self.goal_dir / "evidence" / "fable-transport")
+        checked = self.invoke_feedback("--check")
+        self.assertIn("Fable feedback is valid", checked.stdout)
+
+    def test_schema_two_feedback_cannot_drop_custody_and_pass_as_legacy(self) -> None:
+        self.run_feedback()
+        artifact = self.goal_dir / "evidence" / "fable-feedback.md"
+        artifact.write_text(
+            "\n".join(
+                line
+                for line in artifact.read_text(encoding="utf-8").splitlines()
+                if not line.startswith("- **Transmission manifest:**")
+                and not line.startswith("- **Invocation digest:**")
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        shutil.rmtree(self.goal_dir / "evidence" / "fable-transport")
+        checked = self.invoke_feedback("--check", expected=1)
+        self.assertIn("schema 2 feedback is missing transmission custody", checked.stderr)
+
+    def test_check_rejects_tampered_durable_call_evidence(self) -> None:
+        self.run_feedback()
+        raw_response = (
+            self.goal_dir
+            / "evidence"
+            / "fable-transport"
+            / "planning-round-1"
+            / "attempt-1"
+            / "raw-response.json"
+        )
+        raw_response.write_text("{}\n", encoding="utf-8")
+        checked = self.invoke_feedback("--check", expected=1)
+        self.assertIn("stale Fable planning stdout evidence", checked.stderr)
 
     def test_invalid_existing_feedback_fails_check(self) -> None:
         artifact = self.goal_dir / "evidence" / "fable-feedback.md"
@@ -317,8 +407,48 @@ print(json.dumps({"structured_output": payload}))
             manifest["approval_digest"],
             expected=1,
         )
-        self.assertIn("approval is missing or stale", stale.stderr)
+        self.assertIn("not covered by the one-time goal authorization", stale.stderr)
         self.assertFalse((self.goal_dir / "evidence" / "fable-feedback.md").exists())
+
+    def test_one_time_goal_authorization_covers_later_changed_round_manifests(self) -> None:
+        goal = self.goal_dir / "goal.md"
+        goal.write_text(
+            goal.read_text(encoding="utf-8").replace(
+                "fable_review_rounds: 1", "fable_review_rounds: 2"
+            ),
+            encoding="utf-8",
+        )
+        authorized = self.invoke_feedback("--authorize-goal")
+        self.assertIn("fable-goal-authorization.json", authorized.stdout)
+        first = self.invoke_feedback("--round", "1")
+        self.assertIn("evidence/fable-feedback.md", first.stdout)
+        first_invocation = json.loads(
+            (
+                self.goal_dir
+                / "evidence"
+                / "fable-transport"
+                / "planning-round-1"
+                / "invocation.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual("goal-envelope", first_invocation["authorization_kind"])
+        progress = self.goal_dir / "progress.md"
+        progress.write_text(
+            progress.read_text(encoding="utf-8") + "\n- Reconciled round 1.\n",
+            encoding="utf-8",
+        )
+        second = self.invoke_feedback("--round", "2")
+        self.assertIn("evidence/fable-feedback-round-2.md", second.stdout)
+        self.assertTrue(
+            (
+                self.goal_dir
+                / "evidence"
+                / "fable-transport"
+                / "planning-round-2"
+                / "transmission-manifest.json"
+            ).is_file()
+        )
+        self.assertEqual(2, self.fake_claude_log.read_text(encoding="utf-8").count("<<<END>>>"))
 
     def test_context_file_must_stay_inside_repository(self) -> None:
         outside = self.project.parent / "outside-fable-context.txt"

@@ -15,13 +15,19 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import threading
 from typing import Any
 from urllib.parse import unquote, urlsplit
 from urllib.request import urlopen
 
 from ledger_common import LedgerError, project_root_for
+from managed_files import (
+    atomic_replace_managed,
+    normalize_managed_goal_dir,
+    read_managed_bytes,
+    require_managed_directory,
+    require_managed_regular_file,
+)
 from preview_common import PREVIEW_HEALTH_PATH, preview_state_path
 from render_goal import build_dashboard
 
@@ -97,11 +103,13 @@ class GoalLedgerHandler(SimpleHTTPRequestHandler):
         directory: str,
         health: dict[str, object],
         shared_assets: dict[str, Path],
+        managed_root: Path,
         **kwargs: object,
     ):
         self.health = health
         self.goal_root = Path(directory).resolve()
         self.shared_assets = shared_assets
+        self.managed_root = managed_root
         super().__init__(*args, directory=directory, **kwargs)
 
     def request_path(self) -> str:
@@ -116,8 +124,13 @@ class GoalLedgerHandler(SimpleHTTPRequestHandler):
                 return True
             return False
         try:
-            payload = asset.read_bytes()
-        except OSError:
+            payload = read_managed_bytes(
+                asset,
+                root=self.managed_root,
+                label=f"managed shared preview asset {asset.name}",
+            )
+            assert payload is not None
+        except (LedgerError, OSError):
             self.send_error(404, "Shared preview asset is unavailable")
             return True
         content_type = {
@@ -145,6 +158,15 @@ class GoalLedgerHandler(SimpleHTTPRequestHandler):
             return
         if self.serve_shared_asset():
             return
+        try:
+            require_managed_regular_file(
+                self.goal_root / "index.html",
+                root=self.goal_root,
+                label="managed dashboard",
+            )
+        except LedgerError:
+            self.send_error(403, "Managed dashboard is unavailable")
+            return
         target = Path(self.translate_path(self.path)).resolve()
         try:
             target.relative_to(self.goal_root)
@@ -155,6 +177,15 @@ class GoalLedgerHandler(SimpleHTTPRequestHandler):
 
     def do_HEAD(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         if self.serve_shared_asset(head_only=True):
+            return
+        try:
+            require_managed_regular_file(
+                self.goal_root / "index.html",
+                root=self.goal_root,
+                label="managed dashboard",
+            )
+        except LedgerError:
+            self.send_error(403, "Managed dashboard is unavailable")
             return
         target = Path(self.translate_path(self.path)).resolve()
         try:
@@ -177,19 +208,37 @@ def start_server(
     requested_port: int,
     attempts: int = 20,
 ) -> tuple[ThreadingHTTPServer, dict[str, object]]:
+    goal_dir = normalize_managed_goal_dir(goal_dir)
     slug = goal_dir.name
     project_root = project_root_for(goal_dir)
     assets_root = (project_root / "docs" / "assets").resolve()
+    require_managed_directory(
+        project_root / "docs" / "assets",
+        root=project_root,
+        label="managed shared asset directory",
+    )
     shared_assets = {
         "/assets/goal-ledger.css": assets_root / "goal-ledger.css",
         "/assets/goal-ledger.js": assets_root / "goal-ledger.js",
     }
+    require_managed_regular_file(
+        goal_dir / "index.html",
+        root=goal_dir,
+        label="managed dashboard",
+    )
+    for asset in shared_assets.values():
+        require_managed_regular_file(
+            asset,
+            root=project_root,
+            label=f"managed shared preview asset {asset.name}",
+        )
     health: dict[str, object] = {"ok": True, "goal_slug": slug, "transport": transport}
     handler = partial(
         GoalLedgerHandler,
         directory=str(goal_dir),
         health=health,
         shared_assets=shared_assets,
+        managed_root=project_root,
     )
     ports = (
         [requested_port]
@@ -215,23 +264,24 @@ def start_server(
     )
 
 
-def atomic_json(path: Path, payload: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def atomic_json(path: Path, payload: dict[str, object], *, root: Path) -> None:
     data = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    with tempfile.NamedTemporaryFile(
-        dir=path.parent, prefix=f".{path.name}.", delete=False
-    ) as stream:
-        temporary = Path(stream.name)
-        stream.write(data)
-    try:
-        os.replace(temporary, path)
-    finally:
-        if temporary.exists():
-            temporary.unlink()
+    atomic_replace_managed(
+        path,
+        data,
+        root=root,
+        label="managed preview state",
+    )
 
 
 def render_with_state(goal_dir: Path) -> None:
-    (goal_dir / "index.html").write_bytes(build_dashboard(goal_dir))
+    goal_dir = normalize_managed_goal_dir(goal_dir)
+    atomic_replace_managed(
+        goal_dir / "index.html",
+        build_dashboard(goal_dir),
+        root=goal_dir,
+        label="managed dashboard",
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -249,7 +299,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        goal_dir = args.goal_dir.expanduser().resolve()
+        goal_dir = normalize_managed_goal_dir(args.goal_dir)
         project_root_for(goal_dir)
         if args.check:
             from preview_common import load_preview_state
@@ -277,8 +327,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if not 0 <= args.port <= 65535:
             raise LedgerError("port must be between 0 and 65535")
-        if not (goal_dir / "index.html").is_file():
-            raise LedgerError(f"missing generated dashboard: {goal_dir / 'index.html'}")
+        require_managed_regular_file(
+            goal_dir / "index.html",
+            root=goal_dir,
+            label="managed dashboard",
+        )
 
         transport, bind_host, display_host = choose_endpoint(
             args.host_mode, args.tailscale_bin
@@ -322,7 +375,7 @@ def main(argv: list[str] | None = None) -> int:
             "detail": "Waiting for initial HTTP health check.",
         }
         state_path = preview_state_path(goal_dir)
-        atomic_json(state_path, state)
+        atomic_json(state_path, state, root=goal_dir)
         render_with_state(goal_dir)
 
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -339,7 +392,7 @@ def main(argv: list[str] | None = None) -> int:
                     "detail": "Initial HTTP health check passed; recheck before claiming the endpoint is still live.",
                 }
             )
-            atomic_json(state_path, state)
+            atomic_json(state_path, state, root=goal_dir)
             render_with_state(goal_dir)
             print(f"Preview URL: {url}", flush=True)
             print(f"Transport: {transport}; bind: {bind_host}:{port}", flush=True)
@@ -365,7 +418,7 @@ def main(argv: list[str] | None = None) -> int:
                     "detail": "Preview process stopped; restart and health-check before using this URL.",
                 }
             )
-            atomic_json(state_path, state)
+            atomic_json(state_path, state, root=goal_dir)
             render_with_state(goal_dir)
     except (LedgerError, OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

@@ -9,6 +9,14 @@ from html import escape
 from pathlib import Path
 import sys
 
+from managed_files import (
+    atomic_replace_managed,
+    managed_path_exists,
+    normalize_managed_goal_dir,
+    read_managed_bytes,
+    read_managed_text,
+    require_managed_directory,
+)
 from ledger_common import (
     Document,
     LedgerError,
@@ -53,7 +61,13 @@ SHARED_ASSETS = ("goal-ledger.css", "goal-ledger.js")
 
 def _asset_version(name: str) -> str:
     """Return a short content hash for deterministic browser cache busting."""
-    return sha256((ASSET_ROOT / name).read_bytes()).hexdigest()[:12]
+    data = read_managed_bytes(
+        ASSET_ROOT / name,
+        root=ASSET_ROOT,
+        label=f"shipped shared asset {name}",
+    )
+    assert data is not None
+    return sha256(data).hexdigest()[:12]
 
 
 def _metadata(document: Document, key: str) -> str:
@@ -115,14 +129,37 @@ def asset_status(goal_dir: Path, *, assume_synced: bool = False) -> str:
     if assume_synced:
         return "Current"
     destination = _asset_destination(goal_dir)
+    project_root = project_root_for(goal_dir)
+    if not managed_path_exists(
+        destination,
+        root=project_root,
+        label="managed shared asset directory",
+    ):
+        return "Assets missing"
+    require_managed_directory(
+        destination,
+        root=project_root,
+        label="managed shared asset directory",
+    )
     missing = False
     drifted = False
     for name in SHARED_ASSETS:
         source = ASSET_ROOT / name
         target = destination / name
-        if not target.is_file():
+        source_data = read_managed_bytes(
+            source,
+            root=ASSET_ROOT,
+            label=f"shipped shared asset {name}",
+        )
+        target_data = read_managed_bytes(
+            target,
+            root=project_root,
+            label=f"managed shared asset {name}",
+            missing_ok=True,
+        )
+        if target_data is None:
             missing = True
-        elif target.read_bytes() != source.read_bytes():
+        elif target_data != source_data:
             drifted = True
     if missing:
         return "Assets missing"
@@ -134,17 +171,41 @@ def asset_status(goal_dir: Path, *, assume_synced: bool = False) -> str:
 def sync_assets(goal_dir: Path) -> list[Path]:
     """Copy the shipped CSS and JavaScript into the project's shared asset path."""
     destination = _asset_destination(goal_dir)
-    destination.mkdir(parents=True, exist_ok=True)
-    written: list[Path] = []
+    project_root = project_root_for(goal_dir)
+    require_managed_directory(
+        destination,
+        root=project_root,
+        label="managed shared asset directory",
+        create=True,
+    )
+    planned: list[tuple[str, Path, bytes]] = []
     for name in SHARED_ASSETS:
         source = ASSET_ROOT / name
-        if not source.is_file():
-            raise LedgerError(f"missing shipped asset: {source}")
         target = destination / name
-        data = source.read_bytes()
-        if not target.is_file() or target.read_bytes() != data:
-            target.write_bytes(data)
-            written.append(target)
+        data = read_managed_bytes(
+            source,
+            root=ASSET_ROOT,
+            label=f"shipped shared asset {name}",
+        )
+        current = read_managed_bytes(
+            target,
+            root=project_root,
+            label=f"managed shared asset {name}",
+            missing_ok=True,
+        )
+        assert data is not None
+        if current != data:
+            planned.append((name, target, data))
+
+    written: list[Path] = []
+    for name, target, data in planned:
+        atomic_replace_managed(
+            target,
+            data,
+            root=project_root,
+            label=f"managed shared asset {name}",
+        )
+        written.append(target)
     return written
 
 
@@ -475,11 +536,13 @@ def _closeout_kit_html(
         else:
             artifact_path = goal_dir / str(artifact_name)
             expected_bytes = expected.get(artifact_path)
-            ready = (
-                expected_bytes is not None
-                and artifact_path.is_file()
-                and artifact_path.read_bytes() == expected_bytes
+            artifact_bytes = read_managed_bytes(
+                artifact_path,
+                root=goal_dir,
+                label=f"managed closeout prompt {artifact_name}",
+                missing_ok=True,
             )
+            ready = expected_bytes is not None and artifact_bytes == expected_bytes
             state = "complete" if ready else "pending"
             state_label_text = "Ready" if ready else "Selected"
             if ready and target_id is not None:
@@ -540,7 +603,7 @@ def _activity_html(records: list[tuple[str, str, str, str]]) -> tuple[str, str]:
 
 def build_dashboard(goal_dir: Path, *, assume_synced_assets: bool = False) -> bytes:
     """Build the exact dashboard bytes without mutating the filesystem."""
-    goal_dir = goal_dir.resolve()
+    goal_dir = normalize_managed_goal_dir(goal_dir)
     project_root_for(goal_dir)
     goal_path = goal_dir / "goal.md"
     progress_path = goal_dir / "progress.md"
@@ -579,7 +642,11 @@ def build_dashboard(goal_dir: Path, *, assume_synced_assets: bool = False) -> by
         goal, phase_rows, verification_rows, len(gates), review_lanes
     )
 
-    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    template = read_managed_text(
+        TEMPLATE_PATH,
+        root=ASSET_ROOT,
+        label="shipped dashboard template",
+    )
     values = {
             "DIGEST": digest,
             "CSS_VERSION": _asset_version("goal-ledger.css"),
@@ -634,19 +701,47 @@ def _check(goal_dir: Path, *, include_assets: bool) -> list[str]:
     errors: list[str] = []
     index_path = goal_dir / "index.html"
     expected = build_dashboard(goal_dir, assume_synced_assets=include_assets)
-    if not index_path.is_file():
+    current_index = read_managed_bytes(
+        index_path,
+        root=goal_dir,
+        label="managed dashboard",
+        missing_ok=True,
+    )
+    if current_index is None:
         errors.append(f"missing generated dashboard: {index_path}")
-    elif index_path.read_bytes() != expected:
+    elif current_index != expected:
         errors.append(f"stale generated dashboard: {index_path}")
 
     if include_assets:
         destination = _asset_destination(goal_dir)
+        project_root = project_root_for(goal_dir)
+        if managed_path_exists(
+            destination,
+            root=project_root,
+            label="managed shared asset directory",
+        ):
+            require_managed_directory(
+                destination,
+                root=project_root,
+                label="managed shared asset directory",
+            )
         for name in SHARED_ASSETS:
             source = ASSET_ROOT / name
             target = destination / name
-            if not target.is_file():
+            source_data = read_managed_bytes(
+                source,
+                root=ASSET_ROOT,
+                label=f"shipped shared asset {name}",
+            )
+            target_data = read_managed_bytes(
+                target,
+                root=project_root,
+                label=f"managed shared asset {name}",
+                missing_ok=True,
+            )
+            if target_data is None:
                 errors.append(f"missing shared asset: {target}")
-            elif target.read_bytes() != source.read_bytes():
+            elif target_data != source_data:
                 errors.append(f"stale shared asset: {target}")
     return errors
 
@@ -671,7 +766,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    goal_dir = args.goal_dir.resolve()
+    goal_dir = normalize_managed_goal_dir(args.goal_dir)
     try:
         if args.check:
             errors = _check(goal_dir, include_assets=args.sync_assets)
@@ -682,12 +777,29 @@ def main(argv: list[str] | None = None) -> int:
             print(f"OK: generated dashboard is current: {goal_dir / 'index.html'}")
             return 0
 
+        index_path = goal_dir / "index.html"
+        read_managed_bytes(
+            index_path,
+            root=goal_dir,
+            label="managed dashboard",
+            missing_ok=True,
+        )
         changed_assets = sync_assets(goal_dir) if args.sync_assets else []
         output = build_dashboard(goal_dir)
-        index_path = goal_dir / "index.html"
-        changed = not index_path.is_file() or index_path.read_bytes() != output
+        current = read_managed_bytes(
+            index_path,
+            root=goal_dir,
+            label="managed dashboard",
+            missing_ok=True,
+        )
+        changed = current != output
         if changed:
-            index_path.write_bytes(output)
+            atomic_replace_managed(
+                index_path,
+                output,
+                root=goal_dir,
+                label="managed dashboard",
+            )
         for path in changed_assets:
             print(f"Synced {path}")
         verb = "Rendered" if changed else "Current"

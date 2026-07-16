@@ -20,10 +20,17 @@ from fable_transport import (
     build_transmission_manifest,
     collect_transmission_files,
     context_packet,
+    goal_authorization_covers,
+    goal_authorization_path,
     invocation_digest,
     run_claude_durable,
+    write_goal_authorization,
 )
-from generate_closeout_prompts import FABLE_RESCUE_OPTION, load_closeout_options
+from generate_closeout_prompts import (
+    FABLE_FEEDBACK_OPTION,
+    FABLE_RESCUE_OPTION,
+    load_closeout_options,
+)
 from ledger_common import LedgerError, load_document, project_root_for
 
 
@@ -54,6 +61,7 @@ VERDICTS = {
     "INSUFFICIENT_PACKET",
 }
 TERMINAL_OWNER_GATES = {"NEEDS_NEW_DATA", "UNRESOLVABLE_UNDER_CONTRACT"}
+ELIGIBILITY_DECISIONS = {"not_qualified"}
 
 FABLE_RESCUE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -315,6 +323,85 @@ def validate_candidate(value: object, *, goal_dir: Path) -> dict[str, Any]:
     return candidate
 
 
+def _validate_eligibility_evidence(
+    raw: object, *, goal_dir: Path, label: str
+) -> list[dict[str, str]]:
+    if not isinstance(raw, list) or not raw:
+        raise LedgerError(f"{label} must be a non-empty list")
+    project_root = project_root_for(goal_dir)
+    validated: list[dict[str, str]] = []
+    for index, item in enumerate(raw, 1):
+        reference = _require_object(item, f"{label}[{index}]")
+        path_text = _required_string(reference, "evidence_path", f"{label}[{index}]")
+        digest = _required_string(reference, "sha256", f"{label}[{index}]")
+        verification = _required_string(
+            reference, "verification_method", f"{label}[{index}]"
+        )
+        path = project_root / path_text
+        try:
+            resolved = path.resolve(strict=True)
+            resolved.relative_to(project_root)
+        except (FileNotFoundError, ValueError) as exc:
+            raise LedgerError(
+                f"{label}[{index}].evidence_path is missing or escapes the repository"
+            ) from exc
+        actual = hashlib.sha256(resolved.read_bytes()).hexdigest()
+        if digest != actual:
+            raise LedgerError(f"{label}[{index}].sha256 is stale for {path_text}")
+        validated.append(
+            {
+                "evidence_path": path_text,
+                "sha256": digest,
+                "verification_method": verification,
+            }
+        )
+    return validated
+
+
+def validate_not_qualified_decision(value: object, *, goal_dir: Path) -> dict[str, Any]:
+    decision = _require_object(value, "eligibility_decision")
+    if decision.get("schema_version") != SCHEMA_VERSION:
+        raise LedgerError(f"eligibility_decision.schema_version must be {SCHEMA_VERSION}")
+    if decision.get("decision") not in ELIGIBILITY_DECISIONS:
+        raise LedgerError("eligibility_decision.decision must be not_qualified")
+    _required_string(decision, "scientific_route", "eligibility_decision")
+    _required_string(decision, "proposed_terminal_action", "eligibility_decision")
+    _required_string(decision, "rationale", "eligibility_decision")
+    blockers = _required_list(decision, "operational_blockers", "eligibility_decision")
+    if any(not isinstance(item, str) or not item.strip() for item in blockers):
+        raise LedgerError(
+            "eligibility_decision.operational_blockers must contain non-empty strings"
+        )
+    assessments = _require_object(
+        decision.get("trigger_assessments"), "eligibility_decision.trigger_assessments"
+    )
+    if set(assessments) != TRIGGERS:
+        raise LedgerError(
+            "eligibility_decision.trigger_assessments must assess exactly: "
+            + ", ".join(sorted(TRIGGERS))
+        )
+    for trigger in sorted(TRIGGERS):
+        assessment = _require_object(
+            assessments[trigger],
+            f"eligibility_decision.trigger_assessments.{trigger}",
+        )
+        if assessment.get("qualified") is not False:
+            raise LedgerError(
+                f"eligibility_decision.trigger_assessments.{trigger}.qualified "
+                "must be false for a not_qualified decision"
+            )
+        _required_string(
+            assessment,
+            "rationale",
+            f"eligibility_decision.trigger_assessments.{trigger}",
+        )
+    stored = dict(decision)
+    stored["evidence"] = _validate_eligibility_evidence(
+        decision.get("evidence"), goal_dir=goal_dir, label="eligibility_decision.evidence"
+    )
+    return stored
+
+
 def validate_response(value: object) -> dict[str, Any]:
     response = _require_object(value, "response")
     expected = set(FABLE_RESCUE_SCHEMA["required"])
@@ -407,6 +494,71 @@ def _config(goal: object) -> tuple[int, int, str, str]:
 
 def incident_dir(goal_dir: Path, number: int) -> Path:
     return goal_dir / "evidence" / "fable-rescue" / f"rescue-{number:03d}"
+
+
+def _eligibility_paths(goal_dir: Path) -> list[Path]:
+    base = goal_dir / "evidence" / "fable-rescue"
+    return sorted(base.glob("eligibility-[0-9][0-9][0-9].json")) if base.is_dir() else []
+
+
+def _next_eligibility_path(goal_dir: Path) -> Path:
+    paths = _eligibility_paths(goal_dir)
+    number = 1 if not paths else max(int(path.stem.rsplit("-", 1)[1]) for path in paths) + 1
+    return goal_dir / "evidence" / "fable-rescue" / f"eligibility-{number:03d}.json"
+
+
+def _record_not_qualified_decision(goal_dir: Path, source: Path) -> Path:
+    decision = validate_not_qualified_decision(_read_json(source), goal_dir=goal_dir)
+    decision["recorded_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    decision["decision_sha256"] = _sha256(
+        {
+            key: value
+            for key, value in decision.items()
+            if key not in {"recorded_at", "decision_sha256"}
+        }
+    )
+    for path in _eligibility_paths(goal_dir):
+        existing = _require_object(_read_json(path), "eligibility_decision")
+        if existing.get("decision_sha256") == decision["decision_sha256"]:
+            return path
+    target = _next_eligibility_path(goal_dir)
+    atomic_write_json(target, decision)
+    return target
+
+
+def _record_triggered_eligibility(goal_dir: Path, candidate: Mapping[str, Any]) -> Path:
+    candidate_digest = _sha256(candidate)
+    for path in _eligibility_paths(goal_dir):
+        existing = _require_object(_read_json(path), "eligibility_decision")
+        if (
+            existing.get("decision") == "triggered"
+            and existing.get("candidate_sha256") == candidate_digest
+        ):
+            return path
+    target = _next_eligibility_path(goal_dir)
+    atomic_write_json(
+        target,
+        {
+            "schema_version": SCHEMA_VERSION,
+            "decision": "triggered",
+            "scientific_route": candidate.get("scientific_route", candidate["question"]),
+            "proposed_terminal_action": candidate.get(
+                "proposed_terminal_action", "pause this scientific route pending rescue"
+            ),
+            "trigger": candidate["trigger"],
+            "rationale": (
+                "A schema-valid rescue candidate qualified after operational blockers "
+                "were excluded."
+            ),
+            "candidate_sha256": candidate_digest,
+            "evidence": [
+                {"evidence_path": item["evidence_path"], "sha256": item["sha256"]}
+                for item in candidate["verified_facts"]
+            ],
+            "recorded_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        },
+    )
+    return target
 
 
 def _goal_lineage_incidents(goal_dir: Path, lineage: str) -> list[Path]:
@@ -729,6 +881,37 @@ def fable_rescue_problems(goal_dir: Path, *, require_closed: bool = False) -> li
         return [str(exc)]
     problems: list[str] = []
     base = goal_dir / "evidence" / "fable-rescue"
+    for decision_path in _eligibility_paths(goal_dir):
+        try:
+            decision = _require_object(_read_json(decision_path), "eligibility_decision")
+            if decision.get("schema_version") != SCHEMA_VERSION:
+                raise LedgerError(
+                    f"{decision_path} has unsupported eligibility schema_version"
+                )
+            if decision.get("decision") == "not_qualified":
+                validated = validate_not_qualified_decision(decision, goal_dir=goal_dir)
+                expected = _sha256(
+                    {
+                        key: value
+                        for key, value in validated.items()
+                        if key not in {"recorded_at", "decision_sha256"}
+                    }
+                )
+                if decision.get("decision_sha256") != expected:
+                    raise LedgerError(f"stale decision hash in {decision_path}")
+            elif decision.get("decision") == "triggered":
+                _required_string(decision, "scientific_route", "eligibility_decision")
+                _required_string(
+                    decision, "proposed_terminal_action", "eligibility_decision"
+                )
+                trigger = _required_string(decision, "trigger", "eligibility_decision")
+                if trigger not in TRIGGERS:
+                    raise LedgerError(f"invalid trigger in {decision_path}")
+                _required_string(decision, "candidate_sha256", "eligibility_decision")
+            else:
+                raise LedgerError(f"invalid eligibility decision in {decision_path}")
+        except LedgerError as exc:
+            problems.append(str(exc))
     for incident in sorted(base.glob("rescue-[0-9][0-9][0-9]")) if base.is_dir() else ():
         try:
             request = _require_object(_read_json(incident / "request.json"), "request")
@@ -773,6 +956,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a bounded Claude Fable scientific rescue.")
     parser.add_argument("goal_dir", type=Path)
     parser.add_argument("--candidate", type=Path, help="Structured incident-candidate JSON.")
+    parser.add_argument(
+        "--record-eligibility",
+        type=Path,
+        help=(
+            "Record an evidence-backed not_qualified decision before terminally closing "
+            "a scientific route. Qualified routes use --candidate."
+        ),
+    )
     parser.add_argument("--claude-bin", default=os.environ.get("FABLE_CLAUDE_BIN", "claude"))
     parser.add_argument("--model", default=os.environ.get("FABLE_MODEL", "claude-fable-5"))
     parser.add_argument("--effort", choices=("high", "xhigh"), default=None)
@@ -785,6 +976,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--prepare-transmission", action="store_true")
     parser.add_argument("--approve-transmission", metavar="SHA256")
+    parser.add_argument(
+        "--authorize-goal",
+        action="store_true",
+        help="Record one bounded authorization for all configured Fable planning and rescue calls.",
+    )
+    parser.add_argument(
+        "--authorization-context-file",
+        action="append",
+        default=[],
+        help="Additional repository-relative file covered by the one-time Fable authorization.",
+    )
     parser.add_argument(
         "--supplement",
         help="One repository-relative artifact exactly requested by INSUFFICIENT_PACKET.",
@@ -811,6 +1013,35 @@ def main(argv: list[str] | None = None) -> int:
             print("Claude Fable scientific rescue is not selected.")
             return 0
         max_incidents, _, configured_effort, lineage = _config(goal)
+        if args.authorize_goal:
+            additional = []
+            for raw in args.authorization_context_file:
+                path = Path(raw)
+                if path.is_absolute() or ".." in path.parts:
+                    raise LedgerError(
+                        "--authorization-context-file must be repository-relative"
+                    )
+                additional.append(project_root / path)
+            authorization = write_goal_authorization(
+                goal_dir,
+                planning_rounds=(
+                    int(goal.metadata.get("fable_review_rounds", "1"))
+                    if choices.get(FABLE_FEEDBACK_OPTION) == "yes"
+                    else 0
+                ),
+                rescue_incidents=max_incidents,
+                model=args.model,
+                additional_paths=additional,
+            )
+            print(
+                f"Wrote: {goal_authorization_path(goal_dir).relative_to(project_root)}"
+            )
+            print(json.dumps(authorization, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
+        if args.authorization_context_file:
+            raise LedgerError(
+                "--authorization-context-file is valid only with --authorize-goal"
+            )
         if args.check:
             problems = fable_rescue_problems(
                 goal_dir, require_closed=goal.metadata.get("status") == "complete"
@@ -820,6 +1051,26 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"error: {problem}", file=sys.stderr)
                 return 1
             print("Fable scientific rescue artifacts are valid.")
+            return 0
+        if args.record_eligibility:
+            if any(
+                (
+                    args.candidate,
+                    args.reconcile,
+                    args.record_outcome,
+                    args.record_owner_resolution,
+                    args.supplement,
+                    args.prepare_transmission,
+                    args.approve_transmission,
+                )
+            ):
+                raise LedgerError(
+                    "--record-eligibility cannot be combined with rescue execution modes"
+                )
+            target = _record_not_qualified_decision(
+                goal_dir, args.record_eligibility.expanduser().resolve()
+            )
+            print(f"Wrote: {target.relative_to(project_root)}")
             return 0
         if args.reconcile or args.record_outcome or args.record_owner_resolution:
             if args.incident is None or args.incident < 1:
@@ -856,10 +1107,11 @@ def main(argv: list[str] | None = None) -> int:
             if args.prepare_transmission:
                 print(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
                 return 0
-            if args.approve_transmission != manifest["approval_digest"]:
+            authorized, authorization_detail = goal_authorization_covers(goal_dir, manifest)
+            if args.approve_transmission != manifest["approval_digest"] and not authorized:
                 raise LedgerError(
-                    "exact Fable rescue supplement approval is missing or stale; prepare "
-                    "the transmission and pass its approval_digest"
+                    "Fable rescue supplement is not covered by the one-time goal authorization "
+                    f"({authorization_detail}); expand it once or pass the exact approval_digest"
                 )
             claude_bin = shutil.which(args.claude_bin)
             if claude_bin is None:
@@ -903,7 +1155,11 @@ def main(argv: list[str] | None = None) -> int:
                 invocation_id=invocation_digest(
                     command=command,
                     prompt_sha256=prompt_sha,
-                    approval_digest=str(manifest["approval_digest"]),
+                    approval_digest=(
+                        str(manifest["approval_digest"])
+                        if args.approve_transmission == manifest["approval_digest"]
+                        else authorization_detail
+                    ),
                 ),
                 timeout_seconds=args.timeout_seconds,
                 max_attempts=args.transport_attempts,
@@ -945,6 +1201,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.candidate is None:
             raise LedgerError("--candidate is required to prepare or run a rescue")
         candidate = validate_candidate(_read_json(args.candidate.expanduser().resolve()), goal_dir=goal_dir)
+        eligibility_path = _record_triggered_eligibility(goal_dir, candidate)
         candidate_digest = _sha256(candidate)
         number, previous = _next_incident(
             goal_dir, lineage, max_incidents, candidate_digest
@@ -968,15 +1225,21 @@ def main(argv: list[str] | None = None) -> int:
             effort=effort,
             purpose="read-only Claude Fable scientific rescue",
             tools=(),
-            extra={"incident": number, "lineage": lineage, "candidate_digest": candidate_digest},
+            extra={
+                "incident": number,
+                "lineage": lineage,
+                "candidate_digest": candidate_digest,
+                "eligibility_decision": eligibility_path.relative_to(project_root).as_posix(),
+            },
         )
         if args.prepare_transmission:
             print(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
             return 0
-        if args.approve_transmission != manifest["approval_digest"]:
+        authorized, authorization_detail = goal_authorization_covers(goal_dir, manifest)
+        if args.approve_transmission != manifest["approval_digest"] and not authorized:
             raise LedgerError(
-                "exact Fable rescue transmission approval is missing or stale; run with "
-                "--prepare-transmission and pass its approval_digest"
+                "Fable rescue transmission is not covered by the one-time goal authorization "
+                f"({authorization_detail}); expand it once or pass the exact approval_digest"
             )
         claude_bin = shutil.which(args.claude_bin)
         if claude_bin is None:
@@ -1016,7 +1279,11 @@ def main(argv: list[str] | None = None) -> int:
             invocation_id=invocation_digest(
                 command=command,
                 prompt_sha256=prompt_sha,
-                approval_digest=str(manifest["approval_digest"]),
+                approval_digest=(
+                    str(manifest["approval_digest"])
+                    if args.approve_transmission == manifest["approval_digest"]
+                    else authorization_detail
+                ),
             ),
             timeout_seconds=args.timeout_seconds,
             max_attempts=args.transport_attempts,

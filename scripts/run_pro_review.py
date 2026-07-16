@@ -39,12 +39,19 @@ VALID_STAGE_SELECTIONS = ("plan", "implementation", "both")
 VALID_DELIVERIES = (
     "auto-ui",
     "mcp-app",
+    "native-chat",
     "safari-assisted",
     "chrome-assisted",
     "owner-handoff",
 )
-ASSISTED_SURFACES = ("mcp-app", "safari-assisted", "chrome-assisted")
-SUBMISSION_TRANSPORTS = ASSISTED_SURFACES + ("owner-handoff",)
+ROUTED_SURFACES = (
+    "mcp-app",
+    "native-chat",
+    "safari-assisted",
+    "chrome-assisted",
+)
+COMPUTER_USE_SURFACES = ("safari-assisted", "chrome-assisted")
+SUBMISSION_TRANSPORTS = ROUTED_SURFACES + ("owner-handoff",)
 LEGACY_EVIDENCE_TRANSPORTS = ("chatgpt-desktop",)
 EVIDENCE_TRANSPORTS = SUBMISSION_TRANSPORTS + LEGACY_EVIDENCE_TRANSPORTS
 TRANSPORT_RESULTS = (
@@ -116,7 +123,7 @@ def _atomic_write(path: Path, data: bytes) -> None:
 
 def _write_immutable(path: Path, data: bytes) -> bool:
     """Write a custody artifact once, or reuse it only when the bytes are identical."""
-    if path.exists():
+    def reuse_existing() -> bool:
         if not path.is_file():
             raise LedgerError(f"custody artifact is not a regular file: {path}")
         if path.read_bytes() != data:
@@ -125,8 +132,25 @@ def _write_immutable(path: Path, data: bytes) -> bool:
                 "prepare a new round"
             )
         return False
-    _atomic_write(path, data)
-    return True
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        return reuse_existing()
+    with tempfile.NamedTemporaryFile(
+        dir=path.parent, prefix=f".{path.name}.", delete=False
+    ) as stream:
+        temporary = Path(stream.name)
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    try:
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            return reuse_existing()
+        return True
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _single_line(name: str, value: str) -> str:
@@ -160,8 +184,8 @@ def pro_review_delivery(goal: Document) -> str:
     delivery = goal.metadata.get("pro_review_delivery", "auto-ui").strip()
     if delivery not in VALID_DELIVERIES:
         raise LedgerError(
-            "pro_review_delivery must be auto-ui, mcp-app, safari-assisted, "
-            "chrome-assisted, or owner-handoff"
+            "pro_review_delivery must be auto-ui, mcp-app, native-chat, "
+            "safari-assisted, chrome-assisted, or owner-handoff"
         )
     return delivery
 
@@ -172,29 +196,38 @@ def delivery_candidates(delivery: str, host_platform: str | None = None) -> tupl
         return (delivery,)
     system = (host_platform or platform.system()).strip().casefold()
     if system in {"darwin", "mac", "macos"}:
-        return ("safari-assisted", "chrome-assisted", "owner-handoff")
-    return ("chrome-assisted", "owner-handoff")
+        return (
+            "mcp-app",
+            "native-chat",
+            "safari-assisted",
+            "chrome-assisted",
+            "owner-handoff",
+        )
+    return ("mcp-app", "native-chat", "chrome-assisted", "owner-handoff")
 
 
 def _delivery_plan(goal: Document) -> dict[str, Any]:
     configured = pro_review_delivery(goal)
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "configured_delivery": configured,
         "host_platform": platform.system() or "unknown",
         "candidates": list(delivery_candidates(configured)),
         "transport_drivers": {
             "mcp-app": "goal-ledger-restricted-mcp-app",
+            "native-chat": "user-operated-chatgpt-in-codex",
             "browser": "computer-use-mcp",
         },
+        "computer_use_surfaces": list(COMPUTER_USE_SURFACES),
         "automatic_submission": True,
         "submission_authority": (
             "Recorded GPT Pro yes authorizes the exact generated request and hashed ZIP; "
             "native Computer Use and platform confirmations remain binding."
         ),
         "excluded_surfaces": {
-            "chatgpt-desktop": (
-                "Computer Use cannot safely inspect or operate its own ChatGPT desktop host."
+            "computer-use-chatgpt-host": (
+                "Computer Use cannot safely inspect or operate its own ChatGPT desktop host; "
+                "native Chat remains an explicit user-operated route."
             ),
             "in-app-browser": (
                 "The built-in Browser cannot automate the required ZIP file upload."
@@ -212,6 +245,12 @@ def _delivery_plan(goal: Document) -> dict[str, Any]:
                 "The manifest-bound local MCP server passes its integrity preflight.",
                 "The Secure MCP Tunnel and ChatGPT developer-mode app are connected.",
                 "The owner confirms a visible GPT Pro or Pro Extended mode in the app control.",
+            ],
+            "native-chat": [
+                "The owner can open Chat in the ChatGPT/Codex app.",
+                "GPT Pro or Pro Extended is visibly selected.",
+                "The exact ZIP can be attached and request.md can be submitted once.",
+                "The completed conversation exposes Add to task for return to Codex.",
             ],
             "browser": [
                 "Computer Use can inspect the surface.",
@@ -254,6 +293,46 @@ def _manual_handoff_markdown(
         f"  --stage {stage} --round {round_number} \\\n"
         "  --model-visible \"Pro Extended\" --transport owner-handoff \\\n"
         "  --thread \"<visible conversation title or URL>\"\n"
+        "```\n"
+    ).encode("utf-8")
+
+
+def _native_chat_handoff_markdown(
+    goal_dir: Path,
+    *,
+    stage: str,
+    round_number: int,
+    packet_sha256: str,
+) -> bytes:
+    project_root = project_root_for(goal_dir)
+    round_dir = _review_dir(goal_dir, stage, round_number)
+    request = (round_dir / "request.md").relative_to(project_root).as_posix()
+    packet = (round_dir / "context-packet.zip").relative_to(project_root).as_posix()
+    goal_relative = goal_dir.relative_to(project_root).as_posix()
+    return (
+        "# Native ChatGPT Pro handoff\n\n"
+        "Use the Chat surface built into the ChatGPT/Codex app. This is a user-operated "
+        "subscription route; Computer Use must not control the host app and no private "
+        "ChatGPT session API may be replayed.\n\n"
+        f"- Request: `{request}`\n"
+        f"- ZIP: `{packet}`\n"
+        f"- ZIP SHA-256: `{packet_sha256}`\n"
+        "- Required model: a visibly selected GPT Pro or Pro Extended mode\n\n"
+        "## Submit and return\n\n"
+        "1. Click **Chat** in the left rail and start a clean conversation.\n"
+        "2. Select GPT Pro or Pro Extended and verify the visible model label.\n"
+        f"3. Attach exactly `{packet}` and paste exactly `{request}`.\n"
+        "4. Submit once and wait for the complete answer.\n"
+        "5. Click **Add to task** to return that Chat conversation to the current Codex task.\n"
+        "6. In Codex, verify the imported content includes the response beginning and final "
+        "section before recording it. If the import is incomplete, capture the full answer "
+        "from the same conversation without resubmitting.\n"
+        "7. Record the observed submission with:\n\n"
+        "```bash\n"
+        f"python3 scripts/run_pro_review.py record-submission {goal_relative} \\\n"
+        f"  --stage {stage} --round {round_number} \\\n"
+        "  --model-visible \"Pro Extended\" --transport native-chat \\\n"
+        "  --thread \"<visible Chat conversation title>\"\n"
         "```\n"
     ).encode("utf-8")
 
@@ -652,7 +731,9 @@ def prepare_review(
             next_action=(
                 "Give request.md and context-packet.zip to the owner for manual Pro submission."
                 if configured_delivery == "owner-handoff"
-                else "Probe the next delivery-plan.json surface with Computer Use and record its result."
+                else "Use native-chat-handoff.md and record the observed native Chat readiness."
+                if configured_delivery == "native-chat"
+                else "Check the next delivery-plan.json surface and record its result."
             ),
         ),
     }
@@ -662,6 +743,15 @@ def prepare_review(
             stage=stage,
             round_number=round_number,
             packet_sha256=_sha(packet),
+        )
+    if "native-chat" in delivery_candidates(configured_delivery):
+        artifacts[round_dir / "native-chat-handoff.md"] = (
+            _native_chat_handoff_markdown(
+                goal_dir,
+                stage=stage,
+                round_number=round_number,
+                packet_sha256=_sha(packet),
+            )
         )
     changed = tuple(path for path, data in artifacts.items() if _write_immutable(path, data))
     return round_dir, changed
@@ -689,11 +779,13 @@ def record_transport_attempt(
     result: str,
     detail: str,
 ) -> tuple[Path, str]:
-    """Record one Computer Use surface probe and advance or fall back safely."""
+    """Record one routed Pro surface check and advance or fall back safely."""
     goal_dir, goal = _load_selected(goal_dir)
     _validate_review_selection(goal, stage, round_number)
-    if surface not in ASSISTED_SURFACES:
-        raise LedgerError("surface must be mcp-app, safari-assisted, or chrome-assisted")
+    if surface not in ROUTED_SURFACES:
+        raise LedgerError(
+            "surface must be mcp-app, native-chat, safari-assisted, or chrome-assisted"
+        )
     if result not in TRANSPORT_RESULTS:
         raise LedgerError("result must be " + ", ".join(TRANSPORT_RESULTS))
     detail = _single_line("attempt detail", detail)
@@ -703,10 +795,10 @@ def record_transport_attempt(
     ordered = tuple(
         candidate
         for candidate in delivery_candidates(configured)
-        if candidate in ASSISTED_SURFACES
+        if candidate in ROUTED_SURFACES
     )
     if not ordered:
-        raise LedgerError("configured owner-handoff delivery has no assisted surface to probe")
+        raise LedgerError("configured owner-handoff delivery has no routed surface to check")
     attempts_path = round_dir / "transport-attempts.json"
     attempts_value = _json_object(attempts_path, []) if attempts_path.exists() else None
     attempts = list(attempts_value.get("attempts", [])) if attempts_value else []
@@ -739,7 +831,11 @@ def record_transport_attempt(
 
     if result == "ready":
         status = "ui-ready"
-        next_action = f"Submit the prepared request and ZIP once through {surface}."
+        next_action = (
+            "Follow native-chat-handoff.md, submit once in ChatGPT Pro, then click Add to task."
+            if surface == "native-chat"
+            else f"Submit the prepared request and ZIP once through {surface}."
+        )
     else:
         remaining_after = [candidate for candidate in ordered if candidate != surface and candidate not in attempted_surfaces]
         if remaining_after:
@@ -794,10 +890,23 @@ def record_submission(
         )
     if transport not in SUBMISSION_TRANSPORTS:
         raise LedgerError(
-            "transport must be mcp-app, safari-assisted, chrome-assisted, or owner-handoff"
+            "transport must be mcp-app, native-chat, safari-assisted, "
+            "chrome-assisted, or owner-handoff"
         )
     configured = pro_review_delivery(goal)
     round_dir = _review_dir(goal_dir, stage, round_number)
+    submission_path = round_dir / "submission.json"
+    if submission_path.exists():
+        existing = _json_object(submission_path, [])
+        existing_transport = existing.get("transport") if existing else None
+        if existing_transport != transport:
+            raise LedgerError(
+                f"review packet is already claimed through {existing_transport!r}; "
+                f"refusing transport mixing with {transport!r}"
+            )
+        raise LedgerError(
+            f"submission already recorded: {submission_path}; inspect state instead of resubmitting"
+        )
     exhausted_to_owner = (
         transport == "owner-handoff" and (round_dir / "manual-handoff.md").is_file()
     )
@@ -809,11 +918,6 @@ def record_submission(
     packet = (round_dir / "context-packet.zip").read_bytes()
     if _sha(packet) != manifest.get("archive_sha256"):
         raise LedgerError("prepared Pro packet hash does not match its manifest")
-    submission_path = round_dir / "submission.json"
-    if submission_path.exists():
-        raise LedgerError(
-            f"submission already recorded: {submission_path}; inspect state instead of resubmitting"
-        )
     attempts_path = round_dir / "transport-attempts.json"
     if goal.metadata.get("ledger_version") == "7":
         attempts = (
@@ -821,7 +925,7 @@ def record_submission(
             if attempts_path.is_file()
             else []
         )
-        if transport in ASSISTED_SURFACES and not any(
+        if transport in ROUTED_SURFACES and not any(
             isinstance(item, dict)
             and item.get("surface") == transport
             and item.get("result") == "ready"
@@ -861,6 +965,90 @@ def record_submission(
         ),
     )
     return submission_path
+
+
+def record_mcp_submission_claim(
+    goal_dir: Path,
+    *,
+    stage: str,
+    round_number: int,
+) -> tuple[Path, bool]:
+    """Atomically claim one packet for MCP before exposing any member content."""
+    goal_dir, goal = _load_selected(goal_dir)
+    _validate_review_selection(goal, stage, round_number)
+    configured = pro_review_delivery(goal)
+    if configured not in {"auto-ui", "mcp-app"}:
+        raise LedgerError(
+            f"configured delivery {configured!r} does not authorize the mcp-app transport"
+        )
+    round_dir = _review_dir(goal_dir, stage, round_number)
+    manifest = _load_manifest(round_dir)
+    packet = (round_dir / "context-packet.zip").read_bytes()
+    if _sha(packet) != manifest.get("archive_sha256"):
+        raise LedgerError("prepared Pro packet hash does not match its manifest")
+    if goal.metadata.get("ledger_version") == "7":
+        attempts_path = round_dir / "transport-attempts.json"
+        attempts = (
+            json.loads(attempts_path.read_text(encoding="utf-8")).get("attempts", [])
+            if attempts_path.is_file()
+            else []
+        )
+        if not any(
+            isinstance(item, dict)
+            and item.get("surface") == "mcp-app"
+            and item.get("result") == "ready"
+            for item in attempts
+        ):
+            raise LedgerError("ledger v7 requires a ready mcp-app transport attempt")
+    submission_path = round_dir / "submission.json"
+    if submission_path.is_file():
+        existing = _json_object(submission_path, [])
+        if existing is None or existing.get("transport") != "mcp-app":
+            raise LedgerError(
+                f"review packet is already claimed through "
+                f"{None if existing is None else existing.get('transport')!r}; "
+                "refusing transport mixing with 'mcp-app'"
+            )
+        if existing.get("packet_sha256") != manifest["archive_sha256"]:
+            raise LedgerError("existing MCP submission claim names a different packet")
+        return submission_path, False
+    record = {
+        "schema_version": 2,
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+        "stage": stage,
+        "round": round_number,
+        "transport": "mcp-app",
+        "submission_kind": "mcp-workspace-claim",
+        "model_visible": None,
+        "thread": None,
+        "evidence_received": ["request.md", "context-packet.zip"],
+        "packet_sha256": manifest["archive_sha256"],
+        "request_sha256": manifest["request_sha256"],
+        "scope_basis": "First manifest-bound MCP workspace access; visible model and thread are unconfirmed.",
+    }
+    try:
+        created = _write_immutable(submission_path, _canonical_json(record))
+    except LedgerError:
+        existing = _json_object(submission_path, []) if submission_path.is_file() else None
+        if existing and existing.get("transport") != "mcp-app":
+            raise LedgerError(
+                f"review packet is already claimed through {existing.get('transport')!r}; "
+                "refusing transport mixing with 'mcp-app'"
+            ) from None
+        if existing and existing.get("packet_sha256") == manifest["archive_sha256"]:
+            return submission_path, False
+        raise
+    _atomic_write(
+        round_dir / "state.json",
+        _state_bytes(
+            status="submitted-waiting-response",
+            stage=stage,
+            round_number=round_number,
+            packet_sha256=manifest["archive_sha256"],
+            next_action="Resume the same MCP workspace and wait for one complete Pro response.",
+        ),
+    )
+    return submission_path, created
 
 
 def _response_verdict(text: str) -> str:
@@ -1263,6 +1451,16 @@ def _review_problems(round_dir: Path, *, require_closed: bool) -> list[str]:
                 candidate not in EVIDENCE_TRANSPORTS for candidate in candidates
             ):
                 problems.append("Pro delivery plan has invalid candidates")
+            elif "native-chat" in candidates:
+                native_handoff = round_dir / "native-chat-handoff.md"
+                if not native_handoff.is_file():
+                    problems.append("missing Pro review artifact: native-chat-handoff.md")
+                elif manifest is not None and str(
+                    manifest.get("archive_sha256", "")
+                ) not in native_handoff.read_text(encoding="utf-8"):
+                    problems.append(
+                        "native Chat handoff does not name the prepared packet hash"
+                    )
 
     attempts = None
     if (round_dir / "transport-attempts.json").exists():
@@ -1278,7 +1476,10 @@ def _review_problems(round_dir: Path, *, require_closed: bool) -> list[str]:
                         problems.append("Pro transport attempt must be an object")
                         continue
                     surface = item.get("surface")
-                    if surface not in ASSISTED_SURFACES + LEGACY_EVIDENCE_TRANSPORTS or surface in seen:
+                    if (
+                        surface not in ROUTED_SURFACES + LEGACY_EVIDENCE_TRANSPORTS
+                        or surface in seen
+                    ):
                         problems.append("Pro transport attempts contain an invalid or duplicate surface")
                     seen.add(str(surface))
                     if item.get("result") not in TRANSPORT_RESULTS:
@@ -1288,10 +1489,20 @@ def _review_problems(round_dir: Path, *, require_closed: bool) -> list[str]:
     if submission is not None and manifest is not None:
         if submission.get("packet_sha256") != manifest.get("archive_sha256"):
             problems.append("Pro submission packet hash does not match manifest")
-        if "pro" not in str(submission.get("model_visible", "")).casefold():
-            problems.append("Pro submission does not record a visible Pro model")
         if submission.get("transport") not in EVIDENCE_TRANSPORTS:
             problems.append("Pro submission has an invalid transport")
+        is_mcp_claim = (
+            submission.get("transport") == "mcp-app"
+            and submission.get("submission_kind") == "mcp-workspace-claim"
+        )
+        if is_mcp_claim:
+            if submission.get("model_visible") is not None or submission.get("thread") is not None:
+                problems.append("MCP workspace claim must not invent model or thread evidence")
+        else:
+            if "pro" not in str(submission.get("model_visible", "")).casefold():
+                problems.append("Pro submission does not record a visible Pro model")
+            if not str(submission.get("thread", "")).strip():
+                problems.append("Pro submission does not record a visible thread reference")
 
     response_path = round_dir / "response.md"
     response_metadata = None
@@ -1470,7 +1681,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "record-attempt", help="Record one platform-aware assisted UI readiness probe."
     )
     _add_review_positionals(attempt)
-    attempt.add_argument("--surface", choices=ASSISTED_SURFACES, required=True)
+    attempt.add_argument("--surface", choices=ROUTED_SURFACES, required=True)
     attempt.add_argument("--result", choices=TRANSPORT_RESULTS, required=True)
     attempt.add_argument("--detail", required=True)
 

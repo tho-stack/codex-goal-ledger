@@ -142,8 +142,35 @@ def split_table_row(line: str) -> list[str]:
     return [cell.strip() for cell in re.split(r"(?<!\\)\|", stripped)]
 
 
+def _unfenced_markdown_lines(markdown: str) -> Iterable[str]:
+    """Yield Markdown lines that are not inside backtick or tilde code fences."""
+    fence_character: str | None = None
+    fence_length = 0
+
+    for line in markdown.splitlines():
+        if fence_character is not None:
+            closing = re.match(
+                rf"^ {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*$",
+                line,
+            )
+            if closing:
+                fence_character = None
+                fence_length = 0
+            continue
+
+        opening = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+        if opening:
+            marker, suffix = opening.groups()
+            if marker[0] != "`" or "`" not in suffix:
+                fence_character = marker[0]
+                fence_length = len(marker)
+                continue
+
+        yield line
+
+
 def parse_table(markdown: str) -> tuple[list[str], list[list[str]]]:
-    lines = [line.strip() for line in markdown.splitlines() if line.strip()]
+    lines = [line.strip() for line in _unfenced_markdown_lines(markdown) if line.strip()]
     for index in range(len(lines) - 1):
         if not lines[index].startswith("|") or not lines[index + 1].startswith("|"):
             continue

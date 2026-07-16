@@ -162,6 +162,21 @@ class CloseoutPromptTests(unittest.TestCase):
         self.assertIn("rows must be exactly", invalid_row.stderr)
         self.assertFalse((self.goal_dir / "review-prompt.md").exists())
 
+    def test_selected_prompt_rejects_symlink_without_overwriting_target(self) -> None:
+        self.write_goal(external="yes", codex="no", handoff="no")
+        outside = self.project / "outside-review.txt"
+        outside.write_text("preserve external review\n", encoding="utf-8")
+        prompt = self.goal_dir / "review-prompt.md"
+        prompt.symlink_to(outside)
+
+        rejected = self.run_tool(str(self.goal_dir), expected=2)
+        self.assertIn("must not be a symlink", rejected.stderr)
+        self.assertEqual(
+            "preserve external review\n",
+            outside.read_text(encoding="utf-8"),
+        )
+        self.assertTrue(prompt.is_symlink())
+
     def test_schema_v3_includes_independent_fable_choice(self) -> None:
         self.write_goal(external="no", codex="no", handoff="no", fable="yes")
         _, choices = load_closeout_options(self.goal_dir)

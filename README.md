@@ -24,7 +24,7 @@ It is designed for work that can outlive one chat session: difficult implementat
 - Optional multi-round Claude Fable planning review with critique, feature proposals, science proposals, and explicit reconciliation.
 - Native GPT Pro review packets: a GPT-5.6-oriented review prompt, scoped context ZIP, checksummed manifest, complete raw response, and typed local reconciliation.
 - A bundled restricted MCP App that gives ChatGPT real planning checkboxes and lets GPT Pro review only the immutable packet—without DevSpace, a separate plugin, live repository access, or shell tools.
-- Platform-aware GPT Pro delivery routing: the bundled restricted MCP App when already connected and ready, then Safari/Chrome and a checksum-bound manual handoff. The ChatGPT desktop/classic app is excluded because Computer Use cannot safely control its own host app.
+- MCP-first GPT Pro delivery routing: the bundled restricted MCP App for structured subscription review, then user-operated native Chat/Pro with **Add to task**, Safari/Chrome, and a checksum-bound manual handoff. Computer Use never controls the ChatGPT/Codex host app.
 - Bounded Claude Fable scientific rescue when a hard scientific question stalls implementation.
 - Owned Codex implementation and review agents, including Luna, Sol, and Terra effort presets and mixed swarms.
 - HTTP preview over Tailscale when available, with a localhost fallback; no `file://` dependency.
@@ -42,12 +42,14 @@ The dashboard derives this circuit from preserved evidence. A blocked or revise 
 
 The three review roles are intentionally different:
 
-- **Fable planning peer** challenges the plan before Build. It may propose missing information, features, and scientific hypotheses. Selecting it authorizes preparing the Anthropic review lane; each exact read-only manifest still receives an owner-facing native approval checkbox, then is preserved and reconciled before the next round.
+- **Fable planning peer** challenges the plan before Build. It may propose missing information, features, and scientific hypotheses. One bounded owner approval covers all configured planning and rescue calls inside the disclosed goal-path envelope; every exact manifest and response is still preserved.
 - **GPT Pro** is an independent high-context gate for the plan, the implementation, or both. A `BLOCKED` result returns to revision; `SIGNED OFF` advances only after Codex records a typed, locally verified reconciliation.
 - **Fast gate reviewer** uses Luna High for repeated manifest, custody, dashboard, launch, recovery, and narrow post-fix checks. It returns `GO`, `BLOCKED`, or `NEEDS_DEEP_REVIEW` without occupying the Sol Ultra planning lane.
 - **Codex closeout reviewer** uses Sol XHigh after Verify. Accepted findings return to Build or Verify, then the closeout evidence is refreshed before Close.
 
-**Fable rescue is not another routine review.** It is available only after Build reaches a qualified scientific impasse and operational causes have been ruled out. The rescue packet freezes the question, evidence, competing explanations, prediction, and experiment boundary. Fable remains advisory; Codex must classify every proposal, run the authorized prediction-locked experiment, record the outcome, and return the verified learning to Build. Rescue advice can never serve as completion evidence by itself.
+**Fable rescue is not another routine review.** Before Build abandons a scientific route or records a terminal `no-campaign`, `unresolvable`, or mechanism-rejection decision, the skill automatically evaluates the rescue triggers. A qualified route enters the formal prediction-locked rescue runner; an unqualified route gets a durable evidence-backed checkpoint explaining why. Extra pasted or ad-hoc Fable reviews do not satisfy this gate or consume the incident budget. Fable remains advisory; Codex must classify every proposal, run the authorized prediction-locked experiment, record the outcome, and return the verified learning to Build. Rescue advice can never serve as completion evidence by itself.
+
+For GPT Pro, `auto-ui` prefers the restricted MCP App because it provides manifest reads, response submission, and deterministic receipts. If MCP is unavailable, the skill generates a native Chat handoff: open **Chat**, select Pro, upload the exact packet, wait for the complete response, and click **Add to task** to return it to Codex. Safari and Chrome remain later fallbacks. The native route uses the ChatGPT subscription and never extracts session cookies, device attestation, Sentinel tokens, or private ChatGPT API calls.
 
 ```mermaid
 flowchart LR
@@ -104,18 +106,18 @@ If configuration is missing or incompatible, the skill reports the exact fix rat
 
 `--with-review-bridge` makes the private GPT Pro bridge an installer-owned, resumable setup. Existing Keychain credentials, tunnel profiles, managed runtimes, and the verified ChatGPT app are reused automatically. On first install, Codex continues in Safari, then Chrome if needed, and asks only at the required account-security boundaries: creating the Tunnels-only runtime key and enabling/connecting ChatGPT Developer mode. The key is restricted to Tunnels Read + Use, stored in macOS Keychain, removed from the clipboard, and never written to the skill, profile, ledger, or Git. No API credits or model permissions are enabled; GPT Pro usage remains on the ChatGPT subscription.
 
-Fable also needs an owner-facing native approval route for each exact manifest. The explicit `--configure-review-approvals` option preserves a backup of `config.toml` and sets only:
+Fable needs an owner-facing native approval route for its one-time bounded goal envelope. The explicit `--configure-review-approvals` option preserves a backup of `config.toml` and sets only:
 
 ```toml
 approvals_reviewer = "user"
 approval_policy = "on-request"
 ```
 
-Open a new Codex task after changing these values. A Fable `yes` is lane authorization to prepare review packets; the later native checkbox is the separate approval to transmit one disclosed digest. The skill never manufactures exact approval from an agent-authored allow-list or asks for a typed consent sentence.
+Open a new Codex task after changing these values. Run `run_fable_feedback.py <goal-dir> --authorize-goal` once through that native route. Later manifests need no new prompt while their paths and call parameters remain inside the recorded envelope.
 
 ### Optional direct GPT Pro bridge
 
-Goal Ledger ships `scripts/run_review_bridge.py` and its MCP App widget inside the skill. The bridge is bound to one prepared review round, reads only manifest-listed members from `context-packet.zip`, and can write only the immutable Pro response and custody metadata. It has no generic file, Git, shell, or live-repository tools.
+Goal Ledger ships `scripts/run_review_bridge.py` inside the skill. The bridge is bound to one prepared review round and exposes a familiar but bounded workspace over manifest-listed members from `context-packet.zip`. It has no Git, shell, edit, arbitrary-path, or live-repository tools.
 
 Use OpenAI Secure MCP Tunnel so the local server remains private. After the one-time ChatGPT developer-app connection, preflight and print the exact round-bound command:
 
@@ -127,15 +129,15 @@ python3 scripts/run_review_bridge.py print-command \
   --goal-dir docs/goals/example-goal --stage plan --round 1
 ```
 
-Use the printed stdio command in the tunnel profile, then open the `Codex Goal Ledger` app in a visible GPT Pro conversation. The widget records submission custody, writes a packet-hash-bound receipt for every member Pro reads, and accepts a response only after every member was read and all four required sections are non-empty. The [detailed one-time setup and review bridge runbook](references/review-bridge.md#detailed-one-time-setup) covers installation, Platform permissions, tunnel and runtime-key creation, ChatGPT developer mode, private app registration, verification, per-review rebinding, credential handling, and recovery.
+Use the printed stdio command in the tunnel profile, then open the `Codex Goal Ledger` app in a visible GPT Pro conversation. Pro receives a bounded DevSpace-style workspace with `open_workspace`, `list_files`, `read`, `search`, and `write_review`. It can inspect the immutable packet and save its complete answer without ZIP handling or a widget begin step, but it receives no shell, live-repository, edit, or arbitrary-write access. Packet-hash-bound receipts prove every file was read before the response is accepted. The [detailed one-time setup and review bridge runbook](references/review-bridge.md#detailed-one-time-setup) covers installation, Platform permissions, tunnel and runtime-key creation, ChatGPT developer mode, private app registration, verification, per-review rebinding, credential handling, and recovery.
 
 The [automatic Codex-driven setup](references/review-bridge.md#automatic-codex-driven-setup) documents the exact Safari/Chrome, Keychain, managed-runtime, subscription-only, connection-verification, and idempotent recovery sequence used by the installer.
 
 <p align="center">
-  <img src="docs/images/mcp-planning-controls.png" alt="Goal Ledger MCP planning controls with six independent review checkboxes, bounded round settings, GPT Pro delivery and gate selectors, and a Sol XHigh implementation preset" width="100%">
+  <img src="docs/images/mcp-planning-controls.png" alt="Goal Ledger MCP planning controls with six review checkboxes, one-time Fable approval, bounded round settings, GPT Pro selectors, and an implementation preset" width="100%">
 </p>
 
-<p align="center"><sub>Planning mode replaces the typed yes/no questionnaire with real checkboxes and bounded selectors.</sub></p>
+<p align="center"><sub>Planning mode replaces typed approval text with real checkboxes, bounded selectors, and one Approve selected lanes button.</sub></p>
 
 <details>
   <summary>Immutable GPT Pro packet console</summary>
@@ -146,7 +148,7 @@ The [automatic Codex-driven setup](references/review-bridge.md#automatic-codex-d
 
 ## Use
 
-Invoke `$codex-goal-ledger` in Plan mode and describe the outcome. The skill asks planning choices up front through native click controls, then uses a stepped model-family/effort selector for the primary implementer. The current Codex control does not expose a literal multi-select checkbox group or range slider. When it is unavailable, the bundled MCP App can render six real checkboxes and bounded selectors inside ChatGPT; if that app is not connected, the skill uses one concise checklist rather than pretending native controls were shown.
+Invoke `$codex-goal-ledger` in Plan mode and describe the outcome. When connected, the bundled app presents six real checkboxes, bounded selectors, a one-time Fable disclosure covering planning and scientific rescue, and an **Approve selected lanes** button. No typed approval sentence follows that click. If the app is unavailable, the skill uses native click controls or one concise checklist.
 
 For direct initialization, this is the minimal shape:
 

@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from setup_review_bridge import (
     SetupPaths,
+    _bridge_command,
     _profile_tunnel_id,
     configure_profile,
     profile_problems,
@@ -112,10 +113,97 @@ raise SystemExit(0)
     def test_tunnel_id_is_read_from_current_json_profile_format(self) -> None:
         self.paths.profile_dir.mkdir(parents=True)
         self.paths.profile_path.write_text(
-            json.dumps({"control_plane": {"tunnel_id": TUNNEL_ID}}),
+            json.dumps(
+                {
+                    "control_plane": {
+                        "tunnel_id": TUNNEL_ID,
+                        "api_key": "env:CONTROL_PLANE_API_KEY",
+                    },
+                    "mcp": {
+                        "commands": [
+                            {"channel": "main", "command": _bridge_command()}
+                        ]
+                    },
+                }
+            ),
             encoding="utf-8",
         )
         self.assertEqual(TUNNEL_ID, _profile_tunnel_id(self.paths.profile_path))
+        self.assertEqual([], profile_problems(self.paths.profile_path, TUNNEL_ID))
+
+    def test_yaml_profile_supports_current_commands_list_shape(self) -> None:
+        self.paths.profile_dir.mkdir(parents=True)
+        self.paths.profile_path.write_text(
+            "control_plane:\n"
+            f"  tunnel_id: {TUNNEL_ID}\n"
+            "  api_key: env:CONTROL_PLANE_API_KEY\n"
+            "mcp:\n"
+            "  commands:\n"
+            "    - channel: main\n"
+            f"      command: {_bridge_command()}\n",
+            encoding="utf-8",
+        )
+        self.assertEqual([], profile_problems(self.paths.profile_path, TUNNEL_ID))
+
+    def test_yaml_comments_cannot_hide_wrong_effective_profile_values(self) -> None:
+        self.paths.profile_dir.mkdir(parents=True)
+        self.paths.profile_path.write_text(
+            f"# tunnel_id: {TUNNEL_ID}\n"
+            "# api_key: env:CONTROL_PLANE_API_KEY\n"
+            f"# command: {_bridge_command()}\n"
+            "control_plane:\n"
+            "  tunnel_id: tunnel_wrong\n"
+            "  api_key: env:WRONG_KEY\n"
+            "mcp:\n"
+            "  command: /usr/bin/false\n",
+            encoding="utf-8",
+        )
+        problems = profile_problems(self.paths.profile_path, TUNNEL_ID)
+        self.assertIn(
+            "profile tunnel id does not match the requested tunnel",
+            problems,
+        )
+        self.assertIn(
+            "profile must reference env:CONTROL_PLANE_API_KEY",
+            problems,
+        )
+        self.assertIn(
+            "profile MCP command does not match this installed skill",
+            problems,
+        )
+
+    def test_json_metadata_cannot_hide_wrong_effective_profile_values(self) -> None:
+        self.paths.profile_dir.mkdir(parents=True)
+        self.paths.profile_path.write_text(
+            json.dumps(
+                {
+                    "_comment": {
+                        "tunnel_id": TUNNEL_ID,
+                        "api_key": "env:CONTROL_PLANE_API_KEY",
+                        "command": _bridge_command(),
+                    },
+                    "control_plane": {
+                        "tunnel_id": "tunnel_wrong",
+                        "api_key": "env:WRONG_KEY",
+                    },
+                    "mcp": {"command": "/usr/bin/false"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        problems = profile_problems(self.paths.profile_path, TUNNEL_ID)
+        self.assertIn(
+            "profile tunnel id does not match the requested tunnel",
+            problems,
+        )
+        self.assertIn(
+            "profile must reference env:CONTROL_PLANE_API_KEY",
+            problems,
+        )
+        self.assertIn(
+            "profile MCP command does not match this installed skill",
+            problems,
+        )
 
     def test_clipboard_key_is_saved_and_clipboard_is_cleared(self) -> None:
         pbpaste = self._write_executable(

@@ -45,6 +45,15 @@ class SetupPaths:
         return self.state_dir / "review-bridge.json"
 
 
+@dataclass(frozen=True)
+class TunnelProfile:
+    tunnel_id: str | None
+    api_key: str | None
+    commands: tuple[str, ...]
+    raw_credential: bool
+    parse_error: str | None = None
+
+
 def default_paths() -> SetupPaths:
     return SetupPaths(
         profile_dir=Path.home() / ".config" / "tunnel-client",
@@ -94,38 +103,177 @@ def _bridge_command() -> str:
     )
 
 
-def _profile_tunnel_id(path: Path) -> str | None:
-    if not path.is_file():
-        return None
+def _profile_from_mapping(profile: object) -> TunnelProfile:
+    if not isinstance(profile, dict):
+        return TunnelProfile(None, None, (), False, "profile root must be a mapping")
+    control_plane = profile.get("control_plane")
+    mcp = profile.get("mcp")
+    tunnel_id = (
+        control_plane.get("tunnel_id")
+        if isinstance(control_plane, dict)
+        and isinstance(control_plane.get("tunnel_id"), str)
+        else None
+    )
+    api_key = (
+        control_plane.get("api_key")
+        if isinstance(control_plane, dict)
+        and isinstance(control_plane.get("api_key"), str)
+        else None
+    )
+    commands: list[str] = []
+    if isinstance(mcp, dict):
+        command = mcp.get("command")
+        if isinstance(command, str):
+            commands.append(command)
+        command_entries = mcp.get("commands")
+        if isinstance(command_entries, list):
+            for entry in command_entries:
+                if isinstance(entry, str):
+                    commands.append(entry)
+                elif isinstance(entry, dict) and isinstance(entry.get("command"), str):
+                    commands.append(entry["command"])
+
+    def scalar_strings(value: object) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, dict):
+            return [
+                scalar
+                for child in value.values()
+                for scalar in scalar_strings(child)
+            ]
+        if isinstance(value, list):
+            return [scalar for child in value for scalar in scalar_strings(child)]
+        return []
+
+    raw_credential = any(
+        re.search(r"sk-(?:proj-)?[A-Za-z0-9_-]{20,}", value)
+        for value in scalar_strings(profile)
+    )
+    return TunnelProfile(tunnel_id, api_key, tuple(commands), raw_credential)
+
+
+def _strip_yaml_comment(line: str) -> str:
+    quote: str | None = None
+    escaped = False
+    for index, character in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if quote == '"' and character == "\\":
+            escaped = True
+            continue
+        if character in {'"', "'"}:
+            if quote is None:
+                quote = character
+            elif quote == character:
+                quote = None
+            continue
+        if character == "#" and quote is None:
+            return line[:index]
+    return line
+
+
+def _yaml_scalar(value: str) -> str:
+    value = value.strip()
+    if value.startswith('"') and value.endswith('"'):
+        try:
+            loaded = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("invalid double-quoted YAML scalar") from exc
+        if not isinstance(loaded, str):
+            raise ValueError("profile value must be a string")
+        return loaded
+    if value.startswith("'") and value.endswith("'"):
+        return value[1:-1].replace("''", "'")
+    return value
+
+
+def _profile_from_yaml(text: str) -> TunnelProfile:
+    stack: list[tuple[int, str]] = []
+    tunnel_id: str | None = None
+    api_key: str | None = None
+    commands: list[str] = []
+    effective_lines: list[str] = []
+    try:
+        for raw_line in text.splitlines():
+            line = _strip_yaml_comment(raw_line).rstrip()
+            if not line.strip() or line.strip() in {"---", "..."}:
+                continue
+            if "\t" in line[: len(line) - len(line.lstrip())]:
+                raise ValueError("tabs are not supported in YAML indentation")
+            effective_lines.append(line)
+            indent = len(line) - len(line.lstrip(" "))
+            content = line.strip()
+            while stack and indent <= stack[-1][0]:
+                stack.pop()
+            if content.startswith("- "):
+                content = content[2:].lstrip()
+            match = re.fullmatch(r"([A-Za-z0-9_-]+)\s*:\s*(.*)", content)
+            if not match:
+                continue
+            key, raw_value = match.groups()
+            path = tuple(item[1] for item in stack) + (key,)
+            if not raw_value:
+                stack.append((indent, key))
+                continue
+            value = _yaml_scalar(raw_value)
+            if path == ("control_plane", "tunnel_id"):
+                tunnel_id = value
+            elif path == ("control_plane", "api_key"):
+                api_key = value
+            elif path in {
+                ("mcp", "command"),
+                ("mcp", "commands", "command"),
+            }:
+                commands.append(value)
+    except ValueError as exc:
+        return TunnelProfile(None, None, (), False, str(exc))
+    raw_credential = bool(
+        re.search(
+            r"sk-(?:proj-)?[A-Za-z0-9_-]{20,}",
+            "\n".join(effective_lines),
+        )
+    )
+    return TunnelProfile(tunnel_id, api_key, tuple(commands), raw_credential)
+
+
+def _read_profile(path: Path) -> TunnelProfile:
     text = path.read_text(encoding="utf-8")
     try:
         profile = json.loads(text)
-    except json.JSONDecodeError:
-        profile = None
-    if isinstance(profile, dict):
-        control_plane = profile.get("control_plane")
-        if isinstance(control_plane, dict):
-            tunnel_id = control_plane.get("tunnel_id")
-            if isinstance(tunnel_id, str):
-                return tunnel_id
-    match = re.search(r'(?m)^\s*tunnel_id:\s*["\']?([^\s"\']+)', text)
-    return match.group(1) if match else None
+    except json.JSONDecodeError as exc:
+        if text.lstrip().startswith(("{", "[")):
+            return TunnelProfile(None, None, (), False, f"invalid JSON: {exc.msg}")
+        return _profile_from_yaml(text)
+    return _profile_from_mapping(profile)
+
+
+def _profile_tunnel_id(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    return _read_profile(path).tunnel_id
 
 
 def profile_problems(path: Path, tunnel_id: str | None = None) -> list[str]:
     if not path.is_file():
         return [f"missing tunnel-client profile: {path}"]
-    text = path.read_text(encoding="utf-8")
+    profile = _read_profile(path)
     problems: list[str] = []
-    expected_tunnel = tunnel_id or _profile_tunnel_id(path)
-    if expected_tunnel and expected_tunnel not in text:
+    if profile.parse_error:
+        problems.append(f"profile is not valid supported JSON/YAML: {profile.parse_error}")
+    if profile.tunnel_id is None:
+        problems.append("profile tunnel id is missing")
+    elif not TUNNEL_ID_PATTERN.fullmatch(profile.tunnel_id):
+        problems.append("profile tunnel id is invalid")
+    elif tunnel_id is not None and profile.tunnel_id != tunnel_id:
         problems.append("profile tunnel id does not match the requested tunnel")
-    if "env:CONTROL_PLANE_API_KEY" not in text:
+    if profile.api_key != "env:CONTROL_PLANE_API_KEY":
         problems.append("profile must reference env:CONTROL_PLANE_API_KEY")
-    if re.search(r"sk-(?:proj-)?[A-Za-z0-9_-]{20,}", text):
+    if profile.raw_credential:
         problems.append("profile contains a raw API credential")
     command = _bridge_command()
-    if command not in text:
+    if profile.commands != (command,):
         problems.append("profile MCP command does not match this installed skill")
     return problems
 

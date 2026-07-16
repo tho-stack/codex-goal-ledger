@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from pathlib import PurePosixPath
 import re
 import shutil
 import sys
@@ -22,15 +23,23 @@ from ledger_common import LedgerError, get_section, parse_table, project_root_fo
 from execution_profile import FABLE_LAYER, record_profile
 from fable_transport import (
     atomic_write,
+    atomic_write_json_once,
     build_transmission_manifest,
     collect_transmission_files,
     context_packet,
+    goal_authorization_covers,
+    goal_authorization_path,
     invocation_digest,
     run_claude_durable,
+    write_goal_authorization,
 )
 
 
 FABLE_ARTIFACT = Path("evidence/fable-feedback.md")
+PLANNING_MANIFEST_NAME = "transmission-manifest.json"
+PLANNING_INVOCATION_NAME = "invocation.json"
+LEGACY_FABLE_HEADER = "# Claude Fable peer feedback"
+FABLE_CUSTODY_HEADER = "# Claude Fable peer feedback (artifact schema 2)"
 MAX_FABLE_ROUNDS = 10
 STRUCTURED_MARKER = "## Structured result\n\n```json\n"
 REQUIRED_FIELDS = (
@@ -259,13 +268,17 @@ def _render_feedback(
     effective_effort: str,
     round_number: int,
     round_count: int,
+    transmission_manifest_path: str,
+    transmission_manifest_sha256: str,
+    invocation_id: str,
 ) -> bytes:
     generated = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     strengths = payload["strengths"] or ["No explicit strengths returned."]
     concerns = payload["concerns"]
     lines = [
-        "# Claude Fable peer feedback",
+        FABLE_CUSTODY_HEADER,
         "",
+        "- **Artifact schema:** `2`",
         f"- **Requested profile:** `{requested_profile}`",
         f"- **Invoked profile:** `{invoked_profile}`",
         f"- **Effective profile:** `{effective_model} {effective_effort}`",
@@ -273,6 +286,9 @@ def _render_feedback(
         f"- **Verdict:** **{payload['verdict']}**",
         f"- **Generated:** {generated}",
         "- **Scope:** advisory, read-only planning review",
+        f"- **Transmission manifest:** `{transmission_manifest_path}` "
+        f"(`sha256:{transmission_manifest_sha256}`)",
+        f"- **Invocation digest:** `{invocation_id}`",
         "",
         "## Summary",
         "",
@@ -374,7 +390,17 @@ def load_fable_artifact(
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise LedgerError(f"missing selected Fable feedback: {path}") from exc
-    if not text.startswith("# Claude Fable peer feedback\n") or STRUCTURED_MARKER not in text:
+    if text.startswith(FABLE_CUSTODY_HEADER + "\n"):
+        if "- **Artifact schema:** `2`\n" not in text:
+            raise LedgerError(f"Fable feedback is missing artifact schema evidence: {path}")
+        if load_fable_custody_reference(path) is None:
+            raise LedgerError(f"Fable schema 2 feedback is missing transmission custody: {path}")
+    elif text.startswith(LEGACY_FABLE_HEADER + "\n"):
+        if "- **Artifact schema:**" in text:
+            raise LedgerError(f"legacy Fable feedback contains an invalid schema marker: {path}")
+    else:
+        raise LedgerError(f"invalid Fable feedback structure: {path}")
+    if STRUCTURED_MARKER not in text:
         raise LedgerError(f"invalid Fable feedback structure: {path}")
     for field in ("Requested profile", "Invoked profile", "Effective profile"):
         if f"- **{field}:**" not in text:
@@ -415,6 +441,28 @@ def load_fable_profiles(path: Path) -> tuple[str, str, str]:
     return values[0], values[1], values[2]
 
 
+def load_fable_custody_reference(path: Path) -> tuple[str, str, str] | None:
+    """Read the custody marker added to new feedback while accepting legacy artifacts."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise LedgerError(f"missing selected Fable feedback: {path}") from exc
+    manifest = re.search(
+        r"(?m)^- \*\*Transmission manifest:\*\* `([^`]+)` "
+        r"\(`sha256:([0-9a-f]{64})`\)$",
+        text,
+    )
+    invocation = re.search(
+        r"(?m)^- \*\*Invocation digest:\*\* `([0-9a-f]{64})`$",
+        text,
+    )
+    if manifest is None and invocation is None:
+        return None
+    if manifest is None or invocation is None:
+        raise LedgerError(f"incomplete Fable transmission custody marker: {path}")
+    return manifest.group(1), manifest.group(2), invocation.group(1)
+
+
 def requested_fable_profile(goal: object) -> str | None:
     if getattr(goal, "metadata", {}).get("ledger_version") not in {"4", "5", "6", "7"}:
         return None
@@ -444,6 +492,199 @@ def fable_artifact(round_number: int) -> Path:
 
 def fable_artifacts(goal: object) -> tuple[Path, ...]:
     return tuple(fable_artifact(number) for number in range(1, fable_review_rounds(goal) + 1))
+
+
+def _planning_transport_dir(goal_dir: Path, round_number: int) -> Path:
+    return goal_dir / "evidence" / "fable-transport" / f"planning-round-{round_number}"
+
+
+def _read_json_object(path: Path, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise LedgerError(f"missing {label}: {path}") from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise LedgerError(f"invalid {label}: {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise LedgerError(f"{label} must be a JSON object: {path}")
+    return value
+
+
+def _is_sha256(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def _manifest_approval_digest(manifest: Mapping[str, Any]) -> str:
+    unsigned = {key: value for key, value in manifest.items() if key != "approval_digest"}
+    canonical = json.dumps(
+        unsigned, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _planning_transmission_problems(
+    goal_dir: Path,
+    *,
+    round_number: int,
+    round_count: int,
+    artifact: Path,
+    custody_reference: tuple[str, str, str],
+) -> list[str]:
+    project_root = project_root_for(goal_dir)
+    transport_dir = _planning_transport_dir(goal_dir, round_number)
+    manifest_path = transport_dir / PLANNING_MANIFEST_NAME
+    invocation_path = transport_dir / PLANNING_INVOCATION_NAME
+    status_path = transport_dir / "attempt-1" / "transport.json"
+    stdout_path = transport_dir / "attempt-1" / "raw-response.json"
+    stderr_path = transport_dir / "attempt-1" / "stderr.txt"
+    problems: list[str] = []
+    try:
+        manifest = _read_json_object(manifest_path, "Fable planning transmission manifest")
+        manifest_bytes = manifest_path.read_bytes()
+        if manifest.get("schema_version") != 2:
+            raise LedgerError(
+                f"unsupported Fable planning manifest schema_version: {manifest_path}"
+            )
+        if manifest.get("purpose") != "read-only Claude Fable planning peer review":
+            raise LedgerError(f"invalid Fable planning manifest purpose: {manifest_path}")
+        if manifest.get("round") != round_number or manifest.get("round_count") != round_count:
+            raise LedgerError(f"stale Fable planning round evidence: {manifest_path}")
+        if manifest.get("destination") != (
+            "Anthropic Claude through the user's Claude account"
+        ):
+            raise LedgerError(f"invalid Fable planning destination: {manifest_path}")
+        if manifest.get("repository_access") != (
+            "only the enumerated UTF-8 files embedded in the prompt"
+        ):
+            raise LedgerError(f"invalid Fable planning repository boundary: {manifest_path}")
+        if manifest.get("claude_tools") != ["WebSearch", "WebFetch"]:
+            raise LedgerError(f"invalid Fable planning tool boundary: {manifest_path}")
+        if not _is_sha256(manifest.get("prompt_sha256")):
+            raise LedgerError(f"invalid Fable planning prompt hash: {manifest_path}")
+        if manifest.get("approval_digest") != _manifest_approval_digest(manifest):
+            raise LedgerError(f"stale Fable planning approval digest: {manifest_path}")
+        files = manifest.get("files")
+        if not isinstance(files, list) or not files:
+            raise LedgerError(f"Fable planning manifest has no files: {manifest_path}")
+        seen: set[str] = set()
+        total_bytes = 0
+        for index, item in enumerate(files, 1):
+            if not isinstance(item, dict) or set(item) != {"path", "bytes", "sha256"}:
+                raise LedgerError(
+                    f"invalid Fable planning manifest file {index}: {manifest_path}"
+                )
+            relative = item.get("path")
+            parsed = PurePosixPath(relative) if isinstance(relative, str) else None
+            if (
+                parsed is None
+                or parsed.is_absolute()
+                or ".." in parsed.parts
+                or relative in seen
+            ):
+                raise LedgerError(
+                    f"invalid Fable planning manifest path {relative!r}: {manifest_path}"
+                )
+            size = item.get("bytes")
+            if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+                raise LedgerError(
+                    f"invalid Fable planning manifest byte count: {manifest_path}"
+                )
+            if not _is_sha256(item.get("sha256")):
+                raise LedgerError(f"invalid Fable planning file hash: {manifest_path}")
+            seen.add(relative)
+            total_bytes += size
+        goal_prefix = goal_dir.relative_to(project_root).as_posix()
+        required_prefix = [
+            f"{goal_prefix}/goal.md",
+            f"{goal_prefix}/progress.md",
+            *(
+                f"{goal_prefix}/{fable_artifact(prior).as_posix()}"
+                for prior in range(1, round_number)
+            ),
+        ]
+        if [str(item["path"]) for item in files[: len(required_prefix)]] != required_prefix:
+            raise LedgerError(
+                f"Fable planning manifest is missing its canonical file prefix: {manifest_path}"
+            )
+        if manifest.get("total_bytes") != total_bytes:
+            raise LedgerError(f"stale Fable planning total byte count: {manifest_path}")
+        _, invoked, _ = load_fable_profiles(artifact)
+        if f"{manifest.get('model')} {manifest.get('effort')}" != invoked:
+            raise LedgerError(
+                f"Fable planning manifest profile does not match {artifact}: {manifest_path}"
+            )
+
+        invocation = _read_json_object(invocation_path, "Fable planning invocation record")
+        expected_manifest_relative = manifest_path.relative_to(project_root).as_posix()
+        referenced_manifest, referenced_manifest_hash, referenced_invocation = (
+            custody_reference
+        )
+        if referenced_manifest != expected_manifest_relative:
+            raise LedgerError(f"stale Fable artifact manifest path: {artifact}")
+        if referenced_manifest_hash != hashlib.sha256(manifest_bytes).hexdigest():
+            raise LedgerError(f"stale Fable artifact manifest hash: {artifact}")
+        expected_status_relative = status_path.relative_to(project_root).as_posix()
+        expected_stdout_relative = stdout_path.relative_to(project_root).as_posix()
+        expected_stderr_relative = stderr_path.relative_to(project_root).as_posix()
+        if invocation.get("schema_version") != 1:
+            raise LedgerError(f"unsupported Fable invocation schema: {invocation_path}")
+        if invocation.get("manifest_path") != expected_manifest_relative:
+            raise LedgerError(f"stale Fable invocation manifest path: {invocation_path}")
+        if invocation.get("manifest_sha256") != hashlib.sha256(manifest_bytes).hexdigest():
+            raise LedgerError(f"stale Fable invocation manifest hash: {invocation_path}")
+        if invocation.get("manifest_approval_digest") != manifest.get("approval_digest"):
+            raise LedgerError(f"stale Fable invocation approval digest: {invocation_path}")
+        if invocation.get("prompt_sha256") != manifest.get("prompt_sha256"):
+            raise LedgerError(f"stale Fable invocation prompt hash: {invocation_path}")
+        if invocation.get("transport_status_path") != expected_status_relative:
+            raise LedgerError(f"stale Fable invocation status path: {invocation_path}")
+        if invocation.get("raw_response_path") != expected_stdout_relative:
+            raise LedgerError(f"stale Fable invocation response path: {invocation_path}")
+        if invocation.get("stderr_path") != expected_stderr_relative:
+            raise LedgerError(f"stale Fable invocation stderr path: {invocation_path}")
+        authorization_kind = invocation.get("authorization_kind")
+        authorization_digest = invocation.get("authorization_digest")
+        if authorization_kind not in {"exact-manifest", "goal-envelope"} or not _is_sha256(
+            authorization_digest
+        ):
+            raise LedgerError(f"invalid Fable invocation authorization: {invocation_path}")
+        if (
+            authorization_kind == "exact-manifest"
+            and authorization_digest != manifest.get("approval_digest")
+        ):
+            raise LedgerError(f"stale exact Fable authorization: {invocation_path}")
+        command_without_prompt = invocation.get("command_without_prompt")
+        if not isinstance(command_without_prompt, list) or not command_without_prompt or not all(
+            isinstance(item, str) for item in command_without_prompt
+        ):
+            raise LedgerError(f"invalid Fable invocation command evidence: {invocation_path}")
+        expected_invocation = invocation_digest(
+            command=[*command_without_prompt, "<prompt omitted>"],
+            prompt_sha256=str(manifest["prompt_sha256"]),
+            approval_digest=str(authorization_digest),
+        )
+        if invocation.get("invocation_digest") != expected_invocation:
+            raise LedgerError(f"stale Fable invocation digest: {invocation_path}")
+        if referenced_invocation != expected_invocation:
+            raise LedgerError(f"stale Fable artifact invocation digest: {artifact}")
+
+        status = _read_json_object(status_path, "Fable planning transport status")
+        if status.get("state") != "completed" or status.get("returncode") != 0:
+            raise LedgerError(f"Fable planning transport is not successfully completed: {status_path}")
+        if status.get("invocation_digest") != expected_invocation:
+            raise LedgerError(f"stale Fable transport invocation digest: {status_path}")
+        for path, byte_field, hash_field, label in (
+            (stdout_path, "stdout_bytes", "stdout_sha256", "stdout"),
+            (stderr_path, "stderr_bytes", "stderr_sha256", "stderr"),
+        ):
+            data = path.read_bytes()
+            if status.get(byte_field) != len(data) or status.get(hash_field) != hashlib.sha256(
+                data
+            ).hexdigest():
+                raise LedgerError(f"stale Fable planning {label} evidence: {status_path}")
+    except (LedgerError, OSError) as exc:
+        problems.append(str(exc))
+    return problems
 
 
 def fable_feedback_problems(
@@ -479,6 +720,21 @@ def fable_feedback_problems(
             )
         except LedgerError as exc:
             problems.append(str(exc))
+        try:
+            custody_reference = load_fable_custody_reference(artifact)
+        except LedgerError as exc:
+            problems.append(str(exc))
+        else:
+            if custody_reference is not None:
+                problems.extend(
+                    _planning_transmission_problems(
+                        goal_dir,
+                        round_number=round_number,
+                        round_count=round_count,
+                        artifact=artifact,
+                        custody_reference=custody_reference,
+                    )
+                )
     if problems:
         return problems
     artifact = goal_dir / artifacts[-1]
@@ -622,6 +878,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Bind the invocation to the approval_digest from --prepare-transmission.",
     )
     parser.add_argument(
+        "--authorize-goal",
+        action="store_true",
+        help=(
+            "Record one bounded authorization for every configured planning round and rescue "
+            "incident; run this command once through the native owner approval surface."
+        ),
+    )
+    parser.add_argument(
+        "--authorization-context-file",
+        action="append",
+        default=[],
+        help="Additional repository-relative file covered by the one-time Fable authorization.",
+    )
+    parser.add_argument(
         "--round",
         dest="round_number",
         type=int,
@@ -646,6 +916,36 @@ def main(argv: list[str] | None = None) -> int:
             raise LedgerError("this ledger version has no Claude Fable peer feedback choice")
         if choice == "ask":
             raise LedgerError("Claude Fable peer feedback choice is unresolved")
+        if args.authorize_goal:
+            additional = []
+            for raw in args.authorization_context_file:
+                path = Path(raw)
+                if path.is_absolute() or ".." in path.parts:
+                    raise LedgerError(
+                        "--authorization-context-file must be repository-relative"
+                    )
+                additional.append(project_root / path)
+            rescue_incidents = int(goal.metadata.get("fable_rescue_max_incidents", "0"))
+            authorization = write_goal_authorization(
+                goal_dir,
+                planning_rounds=round_count if choice == "yes" else 0,
+                rescue_incidents=(
+                    rescue_incidents
+                    if choices.get("Claude Fable scientific rescue") == "yes"
+                    else 0
+                ),
+                model=args.model,
+                additional_paths=additional,
+            )
+            print(
+                f"Wrote: {goal_authorization_path(goal_dir).relative_to(project_root)}"
+            )
+            print(json.dumps(authorization, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
+        if args.authorization_context_file:
+            raise LedgerError(
+                "--authorization-context-file is valid only with --authorize-goal"
+            )
         if choice == "no":
             print("Claude Fable peer feedback is not selected.")
             return 0
@@ -753,11 +1053,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.prepare_transmission:
             print(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
             return 0
-        if args.approve_transmission != manifest["approval_digest"]:
+        authorized, authorization_detail = goal_authorization_covers(goal_dir, manifest)
+        if args.approve_transmission != manifest["approval_digest"] and not authorized:
             raise LedgerError(
-                "exact Fable transmission approval is missing or stale; run with "
-                "--prepare-transmission, request native Codex approval for that manifest, "
-                "then pass its approval_digest with --approve-transmission"
+                "Fable transmission is not covered by the one-time goal authorization "
+                f"({authorization_detail}); run --authorize-goal once through the native owner "
+                "approval surface, or use --prepare-transmission and --approve-transmission "
+                "for this exact packet"
             )
 
         claude_bin = shutil.which(args.claude_bin)
@@ -786,19 +1088,47 @@ def main(argv: list[str] | None = None) -> int:
         for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "NODE_OPTIONS"):
             environment.pop(key, None)
         prompt_sha256 = hashlib.sha256(review_prompt.encode("utf-8")).hexdigest()
-        transport_dir = goal_dir / "evidence" / "fable-transport" / (
-            f"planning-round-{chosen_round}"
+        transport_dir = _planning_transport_dir(goal_dir, chosen_round)
+        manifest_path = transport_dir / PLANNING_MANIFEST_NAME
+        manifest_bytes = atomic_write_json_once(manifest_path, manifest)
+        exact_authorization = args.approve_transmission == manifest["approval_digest"]
+        authorization_kind = "exact-manifest" if exact_authorization else "goal-envelope"
+        authorization_digest = (
+            str(manifest["approval_digest"])
+            if exact_authorization
+            else authorization_detail
+        )
+        invocation_id = invocation_digest(
+            command=command,
+            prompt_sha256=prompt_sha256,
+            approval_digest=authorization_digest,
+        )
+        status_path = transport_dir / "attempt-1" / "transport.json"
+        stdout_path = transport_dir / "attempt-1" / "raw-response.json"
+        stderr_path = transport_dir / "attempt-1" / "stderr.txt"
+        atomic_write_json_once(
+            transport_dir / PLANNING_INVOCATION_NAME,
+            {
+                "schema_version": 1,
+                "manifest_path": manifest_path.relative_to(project_root).as_posix(),
+                "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+                "manifest_approval_digest": manifest["approval_digest"],
+                "prompt_sha256": prompt_sha256,
+                "authorization_kind": authorization_kind,
+                "authorization_digest": authorization_digest,
+                "command_without_prompt": command[:-1],
+                "invocation_digest": invocation_id,
+                "transport_status_path": status_path.relative_to(project_root).as_posix(),
+                "raw_response_path": stdout_path.relative_to(project_root).as_posix(),
+                "stderr_path": stderr_path.relative_to(project_root).as_posix(),
+            },
         )
         result = run_claude_durable(
             command,
             cwd=project_root,
             env=environment,
             transport_dir=transport_dir,
-            invocation_id=invocation_digest(
-                command=command,
-                prompt_sha256=prompt_sha256,
-                approval_digest=str(manifest["approval_digest"]),
-            ),
+            invocation_id=invocation_id,
             timeout_seconds=args.timeout_seconds,
             max_attempts=args.transport_attempts,
         )
@@ -819,6 +1149,11 @@ def main(argv: list[str] | None = None) -> int:
                 effective_effort=effective_effort,
                 round_number=chosen_round,
                 round_count=round_count,
+                transmission_manifest_path=manifest_path.relative_to(
+                    project_root
+                ).as_posix(),
+                transmission_manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
+                invocation_id=invocation_id,
             ),
         )
         effective = (

@@ -243,14 +243,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=(
             "auto-ui",
             "mcp-app",
+            "native-chat",
             "safari-assisted",
             "chrome-assisted",
             "owner-handoff",
         ),
         default="auto-ui",
         help=(
-            "Use the restricted Goal Ledger MCP App, platform-aware Safari/Chrome routing, "
-            "one explicit browser surface, or owner handoff (default: auto-ui)."
+            "Use MCP-first automatic routing, native ChatGPT Pro handoff, one explicit "
+            "browser surface, or owner handoff (default: auto-ui)."
         ),
     )
     parser.add_argument(

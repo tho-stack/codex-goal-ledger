@@ -103,7 +103,25 @@ class ProReviewTests(unittest.TestCase):
     def complete_signed_off_review(self) -> bytes:
         self.prepare()
         plan = json.loads((self.round_dir / "delivery-plan.json").read_text())
-        surface = next(item for item in plan["candidates"] if item != "owner-handoff")
+        surface = "native-chat"
+        for candidate in plan["candidates"]:
+            if candidate == surface:
+                break
+            self.run_tool(
+                "run_pro_review.py",
+                "record-attempt",
+                self.goal_dir,
+                "--stage",
+                "plan",
+                "--round",
+                "1",
+                "--surface",
+                candidate,
+                "--result",
+                "unavailable",
+                "--detail",
+                f"{candidate} is unavailable in this test harness.",
+            )
         self.run_tool(
             "run_pro_review.py",
             "record-attempt",
@@ -278,20 +296,36 @@ class ProReviewTests(unittest.TestCase):
         plan = json.loads((self.round_dir / "delivery-plan.json").read_text())
         self.assertEqual("auto-ui", plan["configured_delivery"])
         expected = (
-            ["safari-assisted", "chrome-assisted", "owner-handoff"]
+            [
+                "mcp-app",
+                "native-chat",
+                "safari-assisted",
+                "chrome-assisted",
+                "owner-handoff",
+            ]
             if plan["host_platform"] == "Darwin"
-            else ["chrome-assisted", "owner-handoff"]
+            else ["mcp-app", "native-chat", "chrome-assisted", "owner-handoff"]
         )
         self.assertEqual(expected, plan["candidates"])
         self.assertEqual(
             "goal-ledger-restricted-mcp-app",
             plan["transport_drivers"]["mcp-app"],
         )
+        self.assertEqual(
+            "user-operated-chatgpt-in-codex",
+            plan["transport_drivers"]["native-chat"],
+        )
         self.assertEqual("computer-use-mcp", plan["transport_drivers"]["browser"])
         self.assertTrue(plan["automatic_submission"])
-        self.assertIn("chatgpt-desktop", plan["excluded_surfaces"])
+        self.assertIn("computer-use-chatgpt-host", plan["excluded_surfaces"])
         self.assertFalse(plan["mcp_app_contract"]["live_repository_access"])
         self.assertFalse(plan["mcp_app_contract"]["shell_access"])
+        native_handoff = (self.round_dir / "native-chat-handoff.md").read_text()
+        self.assertIn("Add to task", native_handoff)
+        self.assertIn(manifest_hash := json.loads(
+            (self.round_dir / "packet-manifest.json").read_text()
+        )["archive_sha256"], native_handoff)
+        self.assertEqual(64, len(manifest_hash))
 
         assisted = [item for item in plan["candidates"] if item != "owner-handoff"]
         result = None
@@ -318,6 +352,76 @@ class ProReviewTests(unittest.TestCase):
         self.assertIn("ZIP SHA-256", handoff)
         state = json.loads((self.round_dir / "state.json").read_text())
         self.assertEqual("manual-handoff-ready", state["status"])
+        self.run_tool("run_pro_review.py", "check", self.goal_dir)
+
+    def test_native_chat_records_user_operated_return_to_task(self) -> None:
+        goal = self.goal_dir / "goal.md"
+        goal.write_text(
+            goal.read_text(encoding="utf-8").replace(
+                "pro_review_delivery: auto-ui",
+                "pro_review_delivery: native-chat",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        self.prepare()
+        plan = json.loads((self.round_dir / "delivery-plan.json").read_text())
+        self.assertEqual(["native-chat"], plan["candidates"])
+        handoff = (self.round_dir / "native-chat-handoff.md").read_text()
+        self.assertIn("Click **Chat**", handoff)
+        self.assertIn("Click **Add to task**", handoff)
+        self.assertIn("private ChatGPT session API", handoff)
+
+        bypass = self.run_tool(
+            "run_pro_review.py",
+            "record-submission",
+            self.goal_dir,
+            "--stage",
+            "plan",
+            "--round",
+            "1",
+            "--model-visible",
+            "Pro Extended",
+            "--transport",
+            "native-chat",
+            "--thread",
+            "Native Chat review",
+            expected=2,
+        )
+        self.assertIn("requires a ready transport attempt", bypass.stderr)
+
+        self.run_tool(
+            "run_pro_review.py",
+            "record-attempt",
+            self.goal_dir,
+            "--stage",
+            "plan",
+            "--round",
+            "1",
+            "--surface",
+            "native-chat",
+            "--result",
+            "ready",
+            "--detail",
+            "The owner sees Chat, Pro Extended, upload, and Add to task.",
+        )
+        self.run_tool(
+            "run_pro_review.py",
+            "record-submission",
+            self.goal_dir,
+            "--stage",
+            "plan",
+            "--round",
+            "1",
+            "--model-visible",
+            "Pro Extended",
+            "--transport",
+            "native-chat",
+            "--thread",
+            "Native Chat review",
+        )
+        submission = json.loads((self.round_dir / "submission.json").read_text())
+        self.assertEqual("native-chat", submission["transport"])
         self.run_tool("run_pro_review.py", "check", self.goal_dir)
 
     def test_ready_chrome_attempt_records_actual_submission_surface(self) -> None:

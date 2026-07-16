@@ -21,11 +21,12 @@ Use this reference when native planning controls are unavailable or `pro_review_
 
 ## Purpose
 
-Goal Ledger ships its own MCP server and MCP App widget. It does not depend on DevSpace, a separate Codex plugin, or the legacy `$pro` skill. The bridge provides:
+Goal Ledger ships its own MCP server and MCP App. It does not depend on DevSpace, a separate Codex plugin, or the legacy `$pro` skill, but deliberately adopts DevSpace's effective pattern: GPT Pro becomes the active workspace agent. The bridge provides:
 
 - six real checkbox controls for the independent planning choices;
+- one explicit owner-approval checkbox and **Approve selected lanes** button covering both selected Fable planning and scientific-rescue lanes;
 - bounded round, stage, delivery, gate, model-family, and effort selectors;
-- direct GPT Pro access to the existing deterministic review packet without a browser file upload;
+- a familiar `open_workspace`, `list_files`, `read`, `search`, and `write_review` workflow over the deterministic packet;
 - immutable response capture back into the selected Pro round;
 - the same ZIP, manifest, response, and reconciliation custody used by browser delivery.
 
@@ -133,7 +134,7 @@ The first run installs the skill, checks the machine, and tells the active Codex
 8. Open ChatGPT **Settings → Security and login**. Ask for action-time confirmation immediately before enabling Developer mode.
 9. Open <https://chatgpt.com/plugins>, create `Codex Goal Ledger`, select **Tunnel**, select the existing Goal Ledger tunnel, choose **No Auth**, acknowledge the private-app warning, and connect it. Do not publish it.
 10. If ChatGPT's first discovery pass stops the managed runtime or leaves Create spinning, rerun `setup_review_bridge.py start`, verify ready, and refresh the existing creation page. Do not create a second tunnel, key, or app.
-11. Verify ChatGPT visibly says `Connected to Codex Goal Ledger` and discovers the five bounded tools. Record the connector only after that visible proof:
+11. Verify ChatGPT visibly says `Connected to Codex Goal Ledger` and discovers the bounded tools. Record the connector only after that visible proof:
 
    ```bash
    python3 scripts/setup_review_bridge.py record-chatgpt-app \
@@ -293,6 +294,8 @@ tunnel-client doctor --profile goal-ledger-planning --explain
 
 `doctor` must resolve the profile, runtime key, tunnel identity, and local stdio server. If the profile name already exists, inspect it with `tunnel-client profiles list` and use `tunnel-client profiles edit goal-ledger-planning` or create a new, clearly named profile; do not overwrite an unrelated profile blindly.
 
+Goal Ledger validates the effective structured profile fields: `control_plane.tunnel_id`, `control_plane.api_key`, and the single configured MCP command. Values repeated only in YAML comments, JSON metadata, or other decoy fields do not satisfy this check.
+
 ### 7. Start the client and verify readiness
 
 Keep this command running while connecting ChatGPT:
@@ -333,7 +336,14 @@ Leave `tunnel-client run --profile goal-ledger-planning` running, then:
 7. Set the description to `Interactive Goal Ledger planning controls and immutable GPT Pro review packets.`
 8. Acknowledge the private, unreviewed-app warning and create the app.
 9. Press **Connect** in the final ChatGPT connection dialog.
-10. Confirm ChatGPT discovers exactly these five tools:
+10. Confirm ChatGPT discovers these bounded review-workspace tools:
+   - `open_workspace`
+   - `list_files`
+   - `read`
+   - `search`
+   - `write_review`
+
+   Compatibility and planning tools may also appear:
    - `open_goal_ledger`
    - `get_review_status`
    - `read_review_file`
@@ -360,13 +370,13 @@ Success means:
 
 1. ChatGPT invokes `open_goal_ledger`.
 2. The Goal Ledger widget appears.
-3. It shows planning mode, six checkboxes, review selectors, and the implementation preset control.
+3. It shows planning mode, six checkboxes, review selectors, the implementation preset control, and the one-time Fable approval control.
 4. The tunnel admin UI remains healthy and ready.
 5. No repository path, API key, or arbitrary file tool appears in the tool list.
 
 This verifies only the unbound planning mode. A packet-bound review is separately checked against the exact packet hash when that review is prepared.
 
-If tools or metadata change in a future Goal Ledger release, keep the client running, open **Settings → Plugins → Codex Goal Ledger**, choose **Refresh**, and verify the five-tool boundary again. Normal goal or packet changes do not require an app refresh because the tool definitions stay stable.
+If tools or metadata change in a future Goal Ledger release, keep the client running, open **Settings → Plugins → Codex Goal Ledger**, choose **Refresh**, and verify the bounded tool set again. Normal goal or packet changes do not require an app refresh because the tool definitions stay stable.
 
 ## What changes for each review
 
@@ -399,7 +409,7 @@ python3 scripts/run_review_bridge.py print-command
 
 Configure the tunnel profile with that exact printed command, run `tunnel-client doctor`, then keep `tunnel-client run` healthy. In the ChatGPT conversation, enable the `Codex Goal Ledger` app and ask it to call `open_goal_ledger`.
 
-The widget renders actual checkboxes and bounded selectors. **Use these selections** posts one structured user message into the conversation. Treat that message as the answer to the planning checkpoint, validate the values, and record them in the normal goal artifacts. The planning widget has no filesystem scope and does not modify the ledger itself.
+The widget renders actual checkboxes and bounded selectors. When either Fable lane is selected, **Approve selected lanes** is disabled until the owner checks the one-time Fable-envelope disclosure. Clicking the button posts one structured user message containing the choices and `owner_approval.fable_goal_authorization`. Treat it as the planning answer and authorization to create the bounded goal-level record; do not ask for a typed sentence afterward. The same click covers configured planning rounds and scientific-rescue incidents. The widget itself has no filesystem scope—the Goal Ledger agent writes the authorization record and still follows any unavoidable platform-native execution confirmation.
 
 ## Run one GPT Pro review
 
@@ -442,13 +452,12 @@ The example tunnel ID is intentionally invalid for real use. Substitute the exis
 In ChatGPT:
 
 1. Start or focus a clean conversation in a visibly selected GPT Pro or Pro Extended mode.
-2. Enable the `Codex Goal Ledger` app and call `open_goal_ledger`.
-3. Verify the displayed packet digest matches `packet-manifest.json`.
-4. Choose the visible Pro label, enter a thread title or URL, and press **Begin exact-packet review**. This records the ready MCP attempt and submission custody.
-5. Press **Ask Pro to review now**. The widget posts the exact instruction to read every listed member, obey `START-HERE.md`, and call `submit_pro_review_response` with the complete answer. Every successful `read_review_file` call creates a packet- and member-hash-bound receipt; response submission remains locked until all receipts exist.
-6. Wait for the stored state to become `response-received`. If Pro returns the answer but omits the final tool call, paste the complete answer into the widget's manual response fallback once.
-7. Stop the round-bound tunnel process after the response is safely stored.
-8. Reconcile locally with `run_pro_review.py reconcile`; the bridge never reconciles or approves itself.
+2. Enable the `Codex Goal Ledger` app and send: `Open the bound Goal Ledger workspace, read START-HERE.md and every listed file, perform the requested review, then save the complete response with write_review.`
+3. Pro calls `open_workspace`, which atomically records an `mcp-app` workspace claim before returning any packet data. Every bound tool that returns packet-specific metadata or content—including `open_goal_ledger`, `get_review_status`, `read`, `read_review_file`, `list_files`, or `search`—performs the same claim first. Unbound planning controls do not create a claim.
+4. The claim locks this exact packet to `mcp-app` across interruption and leaves model/thread evidence explicitly unconfirmed because the bridge cannot observe the host conversation. Every `read` creates a packet- and member-hash-bound receipt.
+5. Pro calls `write_review` once. That final operation stores the immutable response; it remains locked until all receipts exist.
+6. Wait for the stored state to become `response-received`, then stop the round-bound tunnel.
+7. Reconcile locally with `run_pro_review.py reconcile`; the bridge never reconciles or approves itself.
 
 ## Credential and data handling
 
@@ -470,18 +479,19 @@ Goal Ledger's bridge re-verifies the packet SHA-256 and every manifest member be
 
 ## Fallback and recovery
 
-Before submission, a failed MCP bridge may fall back to the configured browser or owner-handoff lane. Record the failed `mcp-app` attempt with `run_pro_review.py record-attempt`; do not claim that the packet was submitted.
+Before submission, a failed MCP bridge may fall back to user-operated `native-chat`, then the configured browser or owner-handoff lane. Record the failed `mcp-app` attempt with `run_pro_review.py record-attempt`; do not claim that the packet was submitted.
 
 After `submission.json` exists:
 
 - never upload or submit the packet again through Safari, Chrome, or another app;
 - restart the identical manifest-bound bridge command;
-- `begin_pro_review` reuses an existing MCP submission instead of duplicating it;
+- `open_workspace` and every file-access tool reuse the existing atomic workspace claim;
+- `write_review` accepts only a byte-identical response retry;
 - preserve `packet-read-receipts/`; missing or stale receipts prevent response acceptance;
 - a byte-identical response retry is accepted, while a different response is rejected;
 - continue from `state.json` and the existing ChatGPT conversation.
 
-If the bridge cannot be provisioned because developer mode, tunnel permission, an API key, or `tunnel-client` is unavailable, use `auto-ui` or `owner-handoff`. Do not mark the goal blocked merely because the optional MCP transport is unavailable while another authorized transport remains.
+If the bridge cannot be provisioned because developer mode, tunnel permission, an API key, or `tunnel-client` is unavailable, continue through MCP-first `auto-ui`: native Chat/Pro plus **Add to task**, then browser or owner handoff. Do not mark the goal blocked merely because the optional MCP transport is unavailable while another authorized transport remains.
 
 ## Troubleshooting
 
@@ -517,7 +527,7 @@ If the bridge cannot be provisioned because developer mode, tunnel permission, a
 
 - Keep the correct tunnel profile running and ready.
 - Open Settings → Plugins → `Codex Goal Ledger` and choose **Refresh**.
-- Verify exactly the five bounded tools listed in the setup section.
+- Verify the bounded workspace and compatibility tools listed in the setup section.
 - If extra shell or generic filesystem tools appear, stop and remove the incorrect app connection rather than continuing.
 
 ### `/healthz` passes but `/readyz` fails
@@ -537,7 +547,7 @@ If the bridge cannot be provisioned because developer mode, tunnel permission, a
 
 - Restart the identical packet-bound profile.
 - Reopen the same ChatGPT conversation.
-- Do not call `begin_pro_review` through another transport.
+- Resume the same workspace and call `write_review` only with the complete response from that conversation.
 - Record the response only once; a byte-identical retry is safe, while a different response is rejected.
 
 ### App creation spins and the managed runtime disappears
@@ -549,7 +559,7 @@ If the bridge cannot be provisioned because developer mode, tunnel permission, a
 
 ### No developer mode, tunnel permission, or runtime key is available
 
-Select `auto-ui` or the checksum-bound owner handoff before submission. MCP availability is a transport capability, not a scientific gate, and must not block an otherwise authorized review route.
+Select `auto-ui`, `native-chat`, or the checksum-bound owner handoff before submission. MCP availability is a transport capability, not a scientific gate, and must not block an otherwise authorized review route.
 
 ## Validation
 

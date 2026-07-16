@@ -66,6 +66,8 @@ class FableRescueTests(unittest.TestCase):
         candidate = {
             "schema_version": 1,
             "trigger": "failed_approaches",
+            "scientific_route": "decay-mechanism interpretation",
+            "proposed_terminal_action": "record no-campaign for this mechanism",
             "question": "Which mechanism explains the unresolved decay behavior?",
             "operational_blockers": [],
             "uncertainty_metric": {"name": "candidate mechanisms", "lower_is_better": True},
@@ -202,6 +204,11 @@ print(json.dumps({"structured_output": payload, "model": "claude-fable-5", "effo
     def test_lost_wrapper_output_cannot_lose_completed_response(self) -> None:
         self.run_rescue(discard_output=True)
         incident = self.goal_dir / "evidence" / "fable-rescue" / "rescue-001"
+        eligibility = self.goal_dir / "evidence" / "fable-rescue" / "eligibility-001.json"
+        self.assertTrue(eligibility.is_file())
+        recorded = json.loads(eligibility.read_text(encoding="utf-8"))
+        self.assertEqual("triggered", recorded["decision"])
+        self.assertEqual("failed_approaches", recorded["trigger"])
         self.assertTrue((incident / "response.md").is_file())
         self.assertTrue((incident / "response.json").is_file())
         self.assertTrue((incident / "transport" / "attempt-1" / "raw-response.json").is_file())
@@ -215,6 +222,18 @@ print(json.dumps({"structured_output": payload, "model": "claude-fable-5", "effo
         self.assertEqual(["call"], self.fake_log.read_text(encoding="utf-8").splitlines())
         checked = self.invoke("--check")
         self.assertIn("artifacts are valid", checked.stdout)
+
+    def test_one_time_goal_authorization_covers_rescue_evidence(self) -> None:
+        authorized = self.invoke(
+            "--authorize-goal",
+            "--authorization-context-file",
+            "experiment.txt",
+        )
+        self.assertIn("fable-goal-authorization.json", authorized.stdout)
+        self.invoke("--candidate", str(self.candidate))
+        incident = self.goal_dir / "evidence" / "fable-rescue" / "rescue-001"
+        self.assertTrue((incident / "response.md").is_file())
+        self.assertEqual(["call"], self.fake_log.read_text(encoding="utf-8").splitlines())
 
     def test_reconciliation_locks_predictions_and_outcome_closes_incident(self) -> None:
         self.run_rescue()
@@ -277,6 +296,59 @@ print(json.dumps({"structured_output": payload, "model": "claude-fable-5", "effo
         )
         self.assertIn("excludes operational blockers", rejected.stderr)
         self.assertFalse(self.fake_log.exists())
+
+    def test_records_evidence_backed_not_qualified_terminal_checkpoint(self) -> None:
+        digest = hashlib.sha256(self.evidence.read_bytes()).hexdigest()
+        assessment = {
+            trigger: {
+                "qualified": False,
+                "rationale": f"{trigger} is not supported by the current evidence.",
+            }
+            for trigger in (
+                "failed_approaches",
+                "contradictory_evidence",
+                "non_discriminating_experiment",
+                "numerical_ambiguity",
+                "answerability_uncertain",
+            )
+        }
+        decision = self.project / "eligibility.json"
+        decision.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "decision": "not_qualified",
+                    "scientific_route": "decay-mechanism interpretation",
+                    "proposed_terminal_action": "record no-campaign for this mechanism",
+                    "rationale": "The current replay resolves the interpretation.",
+                    "operational_blockers": [],
+                    "trigger_assessments": assessment,
+                    "evidence": [
+                        {
+                            "evidence_path": "experiment.txt",
+                            "sha256": digest,
+                            "verification_method": "Replayed the registered fixture.",
+                        }
+                    ],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        recorded = self.invoke("--record-eligibility", str(decision))
+        self.assertIn("eligibility-001.json", recorded.stdout)
+        stored = json.loads(
+            (
+                self.goal_dir
+                / "evidence"
+                / "fable-rescue"
+                / "eligibility-001.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual("not_qualified", stored["decision"])
+        self.assertRegex(stored["decision_sha256"], r"^[0-9a-f]{64}$")
+        self.invoke("--check")
 
     def test_insufficient_packet_gets_one_durable_existing_artifact_followup(self) -> None:
         script = self.fake_claude.read_text(encoding="utf-8")
