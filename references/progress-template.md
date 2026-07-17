@@ -56,8 +56,8 @@ The row labels and order are canonical. `scripts/generate_closeout_prompts.py` c
 - `execution_health`
 - `updated`
 
-The shipped template starts at `execution_health: degraded` while the generated
-completion contract is still under review. Promote it only from current
+The shipped template starts at `execution_health: healthy`: initialization has
+no failed attempt or material execution limitation. Change it only from current
 evidence. If the latest launch, run, or campaign attempt failed, `healthy` is
 forbidden until a subsequent attempt passes; documentation quality cannot
 upgrade it. After three consecutive bookkeeping-only commits or two hours with

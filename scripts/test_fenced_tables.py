@@ -179,7 +179,7 @@ class FencedTableTests(unittest.TestCase):
             path.write_text(text, encoding="utf-8", newline="\n")
         progress_text = progress_path.read_text(encoding="utf-8")
         progress_text = progress_text.replace(
-            "execution_health: degraded", "execution_health: inactive", 1
+            "execution_health: healthy", "execution_health: inactive", 1
         )
         progress_text, replacements = re.subn(
             r"(?s)(## Open gates\n\n).*?(\n\n## Recovery capsule)",

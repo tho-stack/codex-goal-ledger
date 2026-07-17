@@ -149,7 +149,7 @@ class GoalLedgerTests(unittest.TestCase):
         progress = goal_dir / "progress.md"
         self.replace_once(goal, "status: active", "status: complete")
         self.replace_once(progress, "status: active", "status: complete")
-        self.replace_once(progress, "execution_health: degraded", "execution_health: inactive")
+        self.replace_once(progress, "execution_health: healthy", "execution_health: inactive")
 
         text = progress.read_text(encoding="utf-8")
         for phase in ("Define", "Build", "Verify", "Close"):
@@ -410,7 +410,7 @@ class GoalLedgerTests(unittest.TestCase):
     def test_interrupted_execution_and_lost_custody_remain_valid_and_recoverable(self) -> None:
         goal_dir, _ = self.init()
         progress = goal_dir / "progress.md"
-        self.replace_once(progress, "execution_health: degraded", "execution_health: interrupted")
+        self.replace_once(progress, "execution_health: healthy", "execution_health: interrupted")
         self.replace_once(progress, "| Define | active |", "| Define | blocked |")
         self.replace_once(
             progress,
@@ -669,7 +669,7 @@ class GoalLedgerTests(unittest.TestCase):
         other_goal, _ = self.init(project=other_project, slug="invalid-health")
         self.replace_once(
             other_goal / "progress.md",
-            "execution_health: degraded",
+            "execution_health: healthy",
             "execution_health: teleporting",
         )
         self.render(other_goal)
@@ -965,7 +965,8 @@ class GoalLedgerTests(unittest.TestCase):
         self.assertIn("documentation quality never upgrades health", state)
         self.assertIn("scientific closure hash is unchanged", state)
         self.assertIn("one-paragraph ceremony-loop", progress_contract)
-        self.assertIn("execution_health: degraded", progress_template)
+        self.assertIn("no failed attempt or material execution limitation", progress_contract)
+        self.assertIn("execution_health: healthy", progress_template)
 
     def test_skill_requires_visible_same_task_preview_delivery(self) -> None:
         package_root = SCRIPT_DIR.parent
