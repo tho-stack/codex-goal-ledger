@@ -149,7 +149,7 @@ class GoalLedgerTests(unittest.TestCase):
         progress = goal_dir / "progress.md"
         self.replace_once(goal, "status: active", "status: complete")
         self.replace_once(progress, "status: active", "status: complete")
-        self.replace_once(progress, "execution_health: healthy", "execution_health: inactive")
+        self.replace_once(progress, "execution_health: degraded", "execution_health: inactive")
 
         text = progress.read_text(encoding="utf-8")
         for phase in ("Define", "Build", "Verify", "Close"):
@@ -410,7 +410,7 @@ class GoalLedgerTests(unittest.TestCase):
     def test_interrupted_execution_and_lost_custody_remain_valid_and_recoverable(self) -> None:
         goal_dir, _ = self.init()
         progress = goal_dir / "progress.md"
-        self.replace_once(progress, "execution_health: healthy", "execution_health: interrupted")
+        self.replace_once(progress, "execution_health: degraded", "execution_health: interrupted")
         self.replace_once(progress, "| Define | active |", "| Define | blocked |")
         self.replace_once(
             progress,
@@ -669,7 +669,7 @@ class GoalLedgerTests(unittest.TestCase):
         other_goal, _ = self.init(project=other_project, slug="invalid-health")
         self.replace_once(
             other_goal / "progress.md",
-            "execution_health: healthy",
+            "execution_health: degraded",
             "execution_health: teleporting",
         )
         self.render(other_goal)
@@ -931,6 +931,41 @@ class GoalLedgerTests(unittest.TestCase):
         self.assertIn("owner-facing external-review approval routing", default_prompt)
         self.assertIn("multi_agent_v2", default_prompt)
         self.assertIn("extra context that could improve", default_prompt)
+
+    def test_skill_encodes_scientific_execution_circuit_breakers(self) -> None:
+        package_root = SCRIPT_DIR.parent
+        skill = (package_root / "SKILL.md").read_text(encoding="utf-8")
+        durable = (package_root / "references" / "durable-execution.md").read_text(
+            encoding="utf-8"
+        )
+        state = (package_root / "references" / "state-model.md").read_text(
+            encoding="utf-8"
+        )
+        progress_contract = (
+            package_root / "references" / "progress-template.md"
+        ).read_text(encoding="utf-8")
+        progress_template = (
+            package_root / "assets" / "templates" / "progress.md"
+        ).read_text(encoding="utf-8")
+
+        for contract in (skill, durable):
+            lowered = contract.casefold()
+            self.assertIn("scientific closure", lowered)
+            self.assertIn("execution environment", lowered)
+            self.assertIn("scientific closure hash is unchanged", lowered)
+            self.assertIn("single-use", lowered)
+            self.assertIn("real subprocess", lowered)
+            self.assertIn("hardcoded", lowered)
+
+        self.assertIn("three consecutive commits or two elapsed hours", skill)
+        self.assertIn("next commit must address or diagnose the cause", skill.casefold())
+        self.assertIn("Cap per-failure evidence at one file", skill)
+        self.assertIn("roughly three times the object-level code", skill)
+        self.assertIn("most recent launch, run, or campaign attempt failed", state)
+        self.assertIn("documentation quality never upgrades health", state)
+        self.assertIn("scientific closure hash is unchanged", state)
+        self.assertIn("one-paragraph ceremony-loop", progress_contract)
+        self.assertIn("execution_health: degraded", progress_template)
 
     def test_skill_requires_visible_same_task_preview_delivery(self) -> None:
         package_root = SCRIPT_DIR.parent

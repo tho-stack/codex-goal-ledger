@@ -24,6 +24,29 @@ Tmux protects process continuity across Codex task and terminal boundaries. It
 does not make an algorithm resumable and does not replace checkpoints, resource
 monitoring, custody, or external-transmission approval.
 
+Freeze two independent hashes before launch:
+
+- **Scientific closure:** contract, algorithm sources, tolerances, dimensions,
+  evaluator, and fold or experiment design. This is the only tier a scientific
+  review authorizes.
+- **Execution environment:** interpreter and toolchain binaries or paths, venvs,
+  temporary or scratch paths, host specifics, and PIDs.
+
+An absolute path outside the repository, interpreter or toolchain binary hash,
+or machine-specific path makes an artifact environment-tier by definition. Move
+it out of the immutable review-bound scientific closure. Environment-only
+changes never invalidate scientific review. Ledger reviews do not authorize a
+launch count: single-use, per-launch, and "consumed" launch permits are
+forbidden. Litmus test: **if the scientific closure hash is unchanged, no new
+approval of any kind is needed to retry** an operational failure.
+
+Before a detached or overnight launch, one test must spawn the real entrypoint
+as a real subprocess under the real target interpreter through the real
+argv-construction path. In-process suites are not launch evidence. A dry-run,
+smoke test, or preflight must traverse the same validation and gate path it
+claims to test and stop only before the declared side effect. Never print or
+return a hardcoded pass; such a gate is worse than no gate.
+
 ## Launch
 
 1. Use a deterministic task-scoped session name containing the goal slug and
@@ -36,9 +59,10 @@ monitoring, custody, or external-transmission approval.
    only its scientific child, must survive the terminal boundary.
 5. Redirect durable stdout and stderr to declared paths even when tmux also has a
    pane history.
-6. Record the tmux path/version, session name, exact command or manifest hash,
-   working directory, start time, supervisor PID, expected outputs, monitor path,
-   and checkpoint path in Custody or goal-owned evidence.
+6. Record the tmux path/version, session name, exact command, separate
+   scientific-closure and environment hashes, working directory, start time,
+   supervisor PID, expected outputs, monitor path, and checkpoint path in
+   Custody or goal-owned evidence.
 7. Verify the session exists, the expected supervisor process is live, and the
    first monitor/heartbeat record is valid before describing the work as active.
 

@@ -2,7 +2,7 @@
 ledger_version: 7
 goal_slug: {{SLUG}}
 status: active
-execution_health: healthy
+execution_health: degraded
 updated: {{DATE}}
 ---
 
@@ -10,7 +10,7 @@ updated: {{DATE}}
 
 ## At a glance
 
-The durable goal is initialized and ready for contract review. No implementation or completion is implied yet.
+The durable goal is initialized and ready for contract review. Execution health remains degraded until the contract and first evidence-producing milestone are verified; no implementation or completion is implied yet.
 
 ## Phase tracker
 

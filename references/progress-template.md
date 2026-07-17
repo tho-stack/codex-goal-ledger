@@ -56,6 +56,15 @@ The row labels and order are canonical. `scripts/generate_closeout_prompts.py` c
 - `execution_health`
 - `updated`
 
+The shipped template starts at `execution_health: degraded` while the generated
+completion contract is still under review. Promote it only from current
+evidence. If the latest launch, run, or campaign attempt failed, `healthy` is
+forbidden until a subsequent attempt passes; documentation quality cannot
+upgrade it. After three consecutive bookkeeping-only commits or two hours with
+no newly passing test, solver or experiment second, or success-criterion
+artifact, keep it degraded and put the required one-paragraph ceremony-loop
+step-back in **Current focus** or the Decision log.
+
 Required sections: At a glance, Phase tracker, Current focus, Work log, Decision log, Verification, Custody, Open gates, Recovery capsule, and Next action. New ledgers also include **Parallel workstreams**; legacy ledgers may add it during their next material planning revision.
 
 The v4 progress template includes an `HTTP dashboard preview` Verification row. Resolve it with the served URL, health-check evidence, verified page DOM, and visible same-task in-app Browser deliverable. Never replace it with a direct local-file, external-browser, or hidden-tab claim.

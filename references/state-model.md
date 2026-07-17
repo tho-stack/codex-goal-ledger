@@ -27,6 +27,12 @@ Allowed values:
 
 Execution health describes the current run, not the objective.
 
+Aggregate health follows the latest attempt, not the quality of its paperwork.
+If the most recent launch, run, or campaign attempt failed,
+`execution_health: healthy` is forbidden; set `degraded` at minimum until a
+subsequent attempt passes. Truthful evidence leaves cannot coexist with a false
+healthy root, and documentation quality never upgrades health.
+
 ## Custody
 
 Allowed work-item values:
@@ -71,6 +77,6 @@ Allowed values are `pending`, `active`, `blocked`, `complete`, and `skipped`. A 
 - GPT Pro transport state is independent of goal state. `packet-ready`, `ui-ready`, and `manual-handoff-ready` are resumable round states for MCP App, browser, or owner delivery and do not alone make the goal blocked. Once `submission.json` exists, recovery stays on that exact packet and transport; optional MCP unavailability before submission must fall through to another selected authorized route rather than creating a scientific blocker.
 - Dashboard review nodes and progress tracks are derived views. Their states must come from review artifacts, Verification rows, phase rows, and gates rather than a separate mutable dashboard record.
 - A preview URL with a past health check is historical evidence. Treat a stopped or failed endpoint as stale until restarted and checked again.
-- A started goal's recorded Scope and Authorization are one standing execution envelope across phases and sessions. Waiting for renewed approval of web or literature research, hardware or component research, downloads, goal-scoped dependency setup, bounded local work, implementation, tests, benchmarks, qualification, configured reviews, frozen retries, or an in-scope replacement run is ledger drift and cannot support `blocked`; manifests, hashes, and resource caps are custody evidence rather than permission boundaries.
+- **Retry authorization is hash-based, never launch-count-based.** A started goal's recorded Scope and Authorization are one standing execution envelope across phases and sessions. A scientific review binds the frozen scientific closure, not the execution environment and not a number of launches. Single-use, per-launch, and "consumed" ledger permits are forbidden. Apply the litmus test at every retry: **if the scientific closure hash is unchanged, no new approval of any kind is needed to retry**. Waiting for renewed approval of web or literature research, hardware or component research, downloads, goal-scoped dependency setup, bounded local work, implementation, tests, benchmarks, qualification, configured reviews, frozen retries, or an in-scope replacement run is ledger drift and cannot support `blocked`; manifests, environment hashes, resource caps, and failed attempts are custody evidence rather than permission boundaries.
 
 When facts conflict, preserve the more conservative state and record the contradiction as an open gate until evidence resolves it.
